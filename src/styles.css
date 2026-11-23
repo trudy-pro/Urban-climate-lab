@@ -863,14 +863,79 @@ a:hover { text-decoration: underline; }
   .connector { transition: none; }
 }
 
-/* ================================================================ into the 3D underground */
-/* diving: the map darkens as the camera goes down into the street */
-.ug-host .map { transition: filter 1.8s var(--ease); }
-.ug-host.is-diving .map { filter: brightness(0.55) saturate(0.85); }
-/* underground: the real street stays visible, dimmed, around the cutaway */
-.ug-host.is-under .map { filter: brightness(0.42) saturate(0.75) blur(1.5px); }
-.ug-host > :not(.map):not(.vignette) { transition: opacity 0.6s var(--ease), visibility 0s linear 0s; }
-/* visibility (not only opacity): some controls keep opacity 1 from their entrance animation */
-.ug-host.is-diving > :not(.map):not(.vignette),
-.ug-host.is-under > :not(.map):not(.vignette) { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.6s var(--ease), visibility 0s linear 0.6s; }
-@media (prefers-reduced-motion: reduce) { .ug-host .map { transition: none; } }
+/* ================================================================== underground page (3D layers under the street) */
+.ug { position: fixed; inset: 0; z-index: 30; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity 0.6s var(--ease), visibility 0s linear 0.6s; }
+.ug.is-open { opacity: 1; visibility: visible; transition: opacity 0.6s var(--ease) 0.4s, visibility 0s; }
+.ug__head, .ug__panel, .ug__tag { pointer-events: auto; }
+.ug__head { position: absolute; top: 84px; left: var(--gutter); max-width: 380px; padding: 16px 18px; border-radius: var(--radius); }
+.ug__head h2 { font-family: var(--display); font-size: 24px; line-height: 1.15; margin: 4px 0 6px; letter-spacing: -0.01em; }
+.ug__head .muted { margin: 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.45; }
+.ug__panel { position: absolute; top: 84px; right: var(--gutter); width: min(340px, 30vw); max-height: calc(100dvh - 110px); overflow: auto; padding: 14px; border-radius: var(--radius); display: flex; flex-direction: column; gap: 12px; }
+.ug__row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ug__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.ug__list .sx-layer { width: 100%; justify-content: flex-start; padding: 7px 11px 7px 9px; border-radius: 10px; font-size: 13px; }
+.ug__text { margin: 0; font-family: var(--text); font-size: 14px; line-height: 1.5; color: var(--ink-2); min-height: 84px; }
+.ug__text strong { color: var(--ink); font-family: var(--font); }
+.ug__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ug__labels { position: absolute; inset: 0; overflow: hidden; }
+.ug__tag {
+  position: absolute; left: 0; top: 0; visibility: hidden; display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px 4px 6px; border-radius: 999px; font-size: 11.5px; white-space: nowrap; color: var(--ink);
+  background: var(--glass-strong); border: 1px solid var(--line); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  transition: opacity 0.25s, border-color 0.25s, background 0.25s; will-change: transform;
+}
+.ug__lines { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.ug__lines g { visibility: hidden; transition: opacity 0.25s; }
+.ug__lines line { stroke: rgba(200, 225, 255, 0.45); stroke-width: 1; }
+.ug__lines circle { fill: #e6edf8; stroke: rgba(6, 10, 18, 0.8); stroke-width: 1.5; }
+.ug__lines g.is-on line { stroke: var(--accent); }
+.ug__lines g.is-on circle { fill: var(--accent); }
+.ug__lines g.is-dim { opacity: 0.35; }
+.ug__tag:hover { border-color: rgba(127, 220, 255, 0.5); }
+.ug__tag.is-on { border-color: var(--accent); background: rgba(16, 40, 56, 0.92); }
+.ug__tag.is-dim { opacity: 0.4; }
+.ug__tag .sx-swatch, .ug__list .sx-swatch { flex: none; }
+/* while underground: only the page's own UI, the brand and the camera controls stay */
+.app.is-underground .surface,
+.app.is-underground .env,
+.app.is-underground .climate,
+.app.is-underground .jcard,
+.app.is-underground .journey,
+.app.is-underground .info,
+.app.is-underground .hud,
+.app.is-underground .intro,
+.app.is-underground .camctl,
+.app.is-underground .map-stages,
+.app.is-underground .resume,
+.app.is-underground .map-tag-anchor,
+.app.is-underground .connector { opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
+@media (max-width: 760px) {
+  .ug__head { top: 70px; left: 16px; right: 16px; max-width: none; padding: 12px 14px; }
+  .ug__head h2 { font-size: 19px; }
+  .ug__head .muted { display: none; }
+  .ug__panel { top: auto; bottom: calc(12px + var(--safe-b)); left: 16px; right: 16px; width: auto; max-height: 46dvh; }
+  .ug__list { flex-direction: row; flex-wrap: wrap; }
+  .ug__list .sx-layer { width: auto; padding: 5px 10px 5px 7px; font-size: 12px; }
+  .ug__text { min-height: 0; font-size: 13px; }
+}
+
+/* underground: Map / Water flows views */
+.ug__views { width: 100%; }
+.ug__views button { flex: 1; }
+.ug__flows { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; opacity: 0; transition: opacity 0.5s var(--ease); }
+.ug.is-flows .ug__flows { opacity: 1; }
+.ug.is-flows .ug__tag, .ug.is-flows .ug__lines { opacity: 0; pointer-events: none !important; }
+.ug__flows > g { visibility: hidden; transition: opacity 0.3s; }
+.ug__flows > g.is-dim { opacity: 0.22; }
+.ug__flows path { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+.ug__flow-glow { stroke-width: 9; opacity: 0.18; }
+.ug__flow-line { stroke-width: 2.6; stroke-dasharray: 2 9; animation: ug-flow 0.9s linear infinite; }
+.ug__flows > g.is-dashed .ug__flow-line { stroke-dasharray: 1 12; animation-duration: 2.4s; }
+.ug__flows > g.is-on .ug__flow-glow { opacity: 0.35; stroke-width: 12; }
+.ug__flows > g.is-on .ug__flow-line { stroke-width: 3.4; }
+@keyframes ug-flow { to { stroke-dashoffset: -11; } }
+.ug__badge { pointer-events: auto; cursor: pointer; }
+.ug__badge circle { fill: currentColor; stroke: #060a12; stroke-width: 2; }
+.ug__badge text { fill: #060a12; font: 700 11px var(--font); }
+.ug__n { display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; border-radius: 50%; color: #060a12; font-size: 11px; font-weight: 700; }
+@media (prefers-reduced-motion: reduce) { .ug__flow-line { animation: none; stroke-dasharray: none; } }
