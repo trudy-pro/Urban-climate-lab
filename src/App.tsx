@@ -56,6 +56,7 @@ import { ClimatePanel } from './components/ClimatePanel';
 import { RainOverlay } from './components/RainOverlay';
 import { SurfaceSection } from './components/SurfaceSection';
 import { UndergroundView, type UgView } from './components/UndergroundView';
+import { UndergroundBlock } from './components/UndergroundBlock';
 import { UndergroundLayer } from './map/underground';
 import { STREET_BEARING } from './journey';
 import type { LayerId } from './components/section/geometry';
@@ -176,7 +177,8 @@ export default function App() {
   const [underground, setUnderground] = useState(() => typeof location !== 'undefined' && location.hash === '#underground');
   const [ugFocus, setUgFocus] = useState<LayerId | null>(null);
   const [ugApart, setUgApart] = useState(false);
-  const [ugWater, setUgWater] = useState(true);
+  // off at first: the Map tab's opening ends with its own short shower
+  const [ugWater, setUgWater] = useState(false);
   const [ugView, setUgView] = useState<UgView>('map');
   const [ugFlowStep, setUgFlowStep] = useState<string | null>(null);
   const ugFlowSvgRef = useRef<SVGSVGElement>(null);
@@ -1221,6 +1223,7 @@ export default function App() {
       setFlying(false);
     }
     const layer = new UndergroundLayer({ labels: ugLabelsRef.current });
+    layer.hideBlock = true;
     layer.flowSvg = ugFlowSvgRef.current;
     ugLayerRef.current = layer;
     map.addLayer(layer);
@@ -1489,6 +1492,16 @@ export default function App() {
 
       <InfoPanel sel={selection} onClose={clearSelection} />
       <SectionConnector active={guided && jStage === 'below' && surface} project={projectHero} />
+      {underground && ugView === 'map' && (
+        <UndergroundBlock
+          apart={ugApart}
+          onApart={setUgApart}
+          raining={ugWater}
+          onRain={() => setUgWater((w) => !w)}
+          focus={ugFocus}
+          onFocus={setUgFocus}
+        />
+      )}
       <UndergroundView
         ref={ugLabelsRef}
         open={underground}
