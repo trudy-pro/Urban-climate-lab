@@ -49,6 +49,12 @@ export const MAPBS_LINK =
 export const TREES_EXPORT =
   'https://data.bs.ch/api/explore/v2.1/catalog/datasets/100052/exports/geojson';
 
+/** Open Data Basel-Stadt — meteoblue City Climate sensor network (dataset 100009) */
+export const STATIONS_EXPORT =
+  'https://data.bs.ch/api/explore/v2.1/catalog/datasets/100009/exports/json';
+export const METEOBLUE_URBANMAPS =
+  'https://www.meteoblue.com/de/products/cityclimate/urbanmaps/basel?map=temperature#13.5/47.5569/7.59117';
+
 export interface ClimateLayer {
   id: string;
   /** WMS layer name for today's analysis */
@@ -108,6 +114,18 @@ export const CLIMATE_LAYERS: ClimateLayer[] = [
     opacity: 0.66,
   },
   {
+    id: 'coldairdensity',
+    wms: 'KL_Kaltluftvolumenstromdichte',
+    wms2030: 'KL_Kaltluftvolumenstromdichte_2030',
+    label: 'Cold-air flow density',
+    unit: 'm³/m',
+    time: 'Night, 04:00',
+    description:
+      'How much cool night air passes per metre of ground — highlights the parks and green corridors that ventilate the city.',
+    ramp: ['#e3f1e8', '#b6d9c2', '#86bf9b', '#5a9f78', '#3a7d5a'],
+    opacity: 0.66,
+  },
+  {
     id: 'wind',
     wms: 'KL_Windstroemungsfeld',
     wms2030: 'KL_Windstroemungsfeld_2030',
@@ -135,6 +153,9 @@ export const CLIMATE_LAYERS: ClimateLayer[] = [
     opacity: 0.6,
   },
 ];
+
+/** Baumkataster — trees scheduled for felling and their planned replacements (WMS point layer). */
+export const FELLING_WMS = 'BA_FaellUndBaumersatzliste';
 
 export function wmsTileUrl(layer: string): string {
   return (

@@ -1,3 +1,4 @@
+import { RainIntensity, type RainLevel } from './RainIntensity';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BUILDING,
@@ -33,7 +34,6 @@ import { WaterSim } from './section/waterSim';
 type Mode = 'above' | 'below' | 'both';
 type JourneyState = 'idle' | 'playing' | 'paused' | 'done';
 
-const INTENSITY = ['Gentle', 'Moderate', 'Heavy'] as const;
 
 const reducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
@@ -56,8 +56,8 @@ function line(x0: number, x1: number, f: (x: number) => number, step = 6) {
 interface Props {
   open: boolean;
   raining: boolean;
-  intensity: 0 | 1 | 2;
-  onIntensity: (i: 0 | 1 | 2) => void;
+  intensity: RainLevel;
+  onIntensity: (i: RainLevel) => void;
   onRain: () => void;
   flows: boolean;
   onFlows: () => void;
@@ -253,13 +253,7 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
             </button>
           </div>
           <div className="sx-secondary">
-            <div className="segmented small" role="radiogroup" aria-label="Rainfall intensity (visual only)" title="Changes the animation only; not a rainfall or flood prediction">
-              {INTENSITY.map((l, i) => (
-                <button key={l} role="radio" aria-checked={intensity === i} className={intensity === i ? 'on' : ''} onClick={() => onIntensity(i as 0 | 1 | 2)}>
-                  {l}
-                </button>
-              ))}
-            </div>
+            <RainIntensity intensity={intensity} onIntensity={onIntensity} />
             <button className={`sx-chip ${flows ? 'is-on' : ''}`} aria-pressed={flows} onClick={onFlows}>Water flows on map</button>
             <button
               className={`sx-chip ${layersOpen ? 'is-on' : ''}`}

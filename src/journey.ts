@@ -66,9 +66,9 @@ export const neighborhoodView: CameraView = {
 /** Oblique view along the street: high enough to read both building rows, never inside them. */
 export const streetView: CameraView = {
   center: STUDY_CENTER,
-  zoom: 17.55,
-  pitch: 63,
-  bearing: STREET_BEARING,
+  zoom: 17.35,
+  pitch: 59,
+  bearing: STREET_BEARING - 10,
 };
 
 /** Close view over a chosen infiltration point (the centre is replaced by that point). */

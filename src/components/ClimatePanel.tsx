@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CLIMATE_LAYERS, MAPBS_LINK, wmsLegendJsonUrl, type ClimateLayer } from '../config';
+import { CLIMATE_LAYERS, MAPBS_LINK, METEOBLUE_URBANMAPS, wmsLegendJsonUrl, type ClimateLayer } from '../config';
 import { Icon } from './Icons';
 
 interface Props {
@@ -14,6 +14,11 @@ interface Props {
   trees: boolean;
   onTrees: () => void;
   treeStatus: string;
+  felling: boolean;
+  onFelling: () => void;
+  stations: boolean;
+  onStations: () => void;
+  stationStatus: string;
   loadingTiles: boolean;
 }
 
@@ -54,7 +59,7 @@ export function ClimatePanel(p: Props) {
       <button className="glass climate__toggle" onClick={p.onToggleOpen} aria-expanded={p.open}>
         <Icon.layers />
         <span>Basel climate data</span>
-        {(p.activeId || p.trees) && <span className="badge">{(p.activeId ? 1 : 0) + (p.trees ? 1 : 0)}</span>}
+        {(p.activeId || p.trees || p.felling || p.stations) && <span className="badge">{(p.activeId ? 1 : 0) + (p.trees ? 1 : 0) + (p.felling ? 1 : 0) + (p.stations ? 1 : 0)}</span>}
       </button>
 
       <div className="glass climate__panel" aria-hidden={!p.open}>
@@ -68,6 +73,36 @@ export function ClimatePanel(p: Props) {
           </span>
           <span className="switch" />
         </button>
+
+        <button className={`layer-row ${p.felling ? 'on' : ''}`} onClick={p.onFelling} aria-pressed={p.felling}>
+          <span className="layer-row__icon green"><Icon.tree /></span>
+          <span className="layer-row__txt">
+            <strong>Felling & replacement list</strong>
+            <small>Baumkataster · trees to be felled and replanted</small>
+          </span>
+          <span className="switch" />
+        </button>
+
+        <button className={`layer-row ${p.stations ? 'on' : ''}`} onClick={p.onStations} aria-pressed={p.stations}>
+          <span className="layer-row__icon warm"><Icon.thermo /></span>
+          <span className="layer-row__txt">
+            <strong>Live temperature sensors</strong>
+            <small>{p.stationStatus}</small>
+          </span>
+          <span className="switch" />
+        </button>
+        {p.stations && (
+          <div className="climate__detail">
+            <div className="ramp">
+              <span style={{ background: 'linear-gradient(90deg, #3b6fd1, #58b6d6, #f1e37a, #f39a3c, #d9412b)' }} />
+              <div><small>−5 °C</small><small>35 °C</small></div>
+            </div>
+            <p className="muted">
+              Point readings from solar-powered sensors; daytime values can read several degrees high in sun.{' '}
+              <a href={METEOBLUE_URBANMAPS} target="_blank" rel="noreferrer">meteoblue urban maps <Icon.ext /></a>
+            </p>
+          </div>
+        )}
 
         <div className="climate__sep">
           <span>Klimaanalyse</span>
@@ -144,7 +179,7 @@ export function ClimatePanel(p: Props) {
 
         <p className="climate__src">
           Sources: Geodaten Kanton Basel-Stadt (wms.geo.bs.ch) · Stadtklimakonzept / Klimaanalyse · Open Data
-          Basel-Stadt Baumkataster.{' '}
+          Basel-Stadt Baumkataster & Smart Climate Luftklima (meteoblue City Climate network).{' '}
           <a href={MAPBS_LINK} target="_blank" rel="noreferrer">Open in MapBS <Icon.ext /></a>
         </p>
       </div>

@@ -1,9 +1,12 @@
+import { RainIntensity, type RainLevel } from './RainIntensity';
 import { Icon } from './Icons';
 
 interface Props {
   visible: boolean;
   unlocked: boolean;
   rain: boolean;
+  intensity: RainLevel;
+  onIntensity: (i: RainLevel) => void;
   flows: boolean;
   surface: boolean;
   flowStats: { lines: number; sinks: number } | null;
@@ -12,11 +15,13 @@ interface Props {
   onFlows: () => void;
   onSurface: () => void;
   onFlyTarget: () => void;
+  opening?: boolean;
+  ready: boolean;
 }
 
 export function EnvToolbar(p: Props) {
   return (
-    <div className={`env ${p.visible ? 'is-visible' : ''}`}>
+    <div className={`env ${p.visible ? 'is-visible' : ''} ${p.opening ? 'env--opening' : ''}`} inert={!p.visible}>
       {p.unlocked ? (
         <>
           <div className="env__caption">
@@ -36,10 +41,14 @@ export function EnvToolbar(p: Props) {
               <span>Above / Below Surface</span>
             </button>
           </div>
+          {p.rain && <RainIntensity intensity={p.intensity} onIntensity={p.onIntensity} />}
           {(p.flows || p.flowHint) && (
             <div className="env__legend glass">
               {p.flowHint ? (
-                <span>{p.flowHint}</span>
+                <>
+                  <span>{p.flowHint}</span>
+                  <em>Terrain model, ignores sewers</em>
+                </>
               ) : (
                 <>
                   <span className="grad" />
@@ -54,9 +63,12 @@ export function EnvToolbar(p: Props) {
           )}
         </>
       ) : (
-        <button className="glass env__locked" onClick={p.onFlyTarget}>
-          <Icon.target />
-          <span>Fly to Therwilerstrasse to unlock rain, water-flow & surface layers</span>
+        <button className="glass env__locked" onClick={p.onFlyTarget} disabled={!p.ready}>
+          {p.opening ? (
+            <span><strong><Icon.target /> Fly to Therwilerstrasse</strong> to unlock rain, water-flow & surface layers</span>
+          ) : (
+            <><Icon.target /><span>Fly to Therwilerstrasse to unlock rain, water-flow & surface layers</span></>
+          )}
         </button>
       )}
     </div>

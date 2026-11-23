@@ -20,7 +20,9 @@ npm run build      # production build in dist/
 | Building facts (year, floors, dwellings, use, heating) | Federal building register GWR, Open Data Basel-Stadt (datasets 100230 / 100231) |
 | Building name / height tags | OpenStreetMap via Overpass API (optional; often busy) |
 | Trees (species, age, protection) | Baumkataster, Open Data Basel-Stadt (dataset 100052) |
-| Heat island, PET, air temperature, cold-air flow, wind, focus areas, 2030 scenario | Stadtklima WMS, Geodaten Kanton Basel-Stadt (wms.geo.bs.ch) |
+| Heat island, PET, air temperature, cold-air flow & flow density, wind, focus areas, 2030 scenario | Stadtklima WMS, Geodaten Kanton Basel-Stadt (wms.geo.bs.ch) |
+| Trees to be felled / replaced | Baumkataster WMS layer `BA_FaellUndBaumersatzliste` (wms.geo.bs.ch) |
+| Live air temperature at ~50–200 sensors | meteoblue City Climate network via Open Data Basel-Stadt "Smart Climate Luftklima" (dataset 100009), refreshed every 5 min |
 
 Anything not in a dataset is shown as "Data unavailable".
 
@@ -29,6 +31,9 @@ Anything not in a dataset is shown as "Data unavailable".
 - **Make it Rain**: a visual rain effect plus a "wet street" look.
 - **Reveal Water Flows**: animated paths built from real roofs, streets, trees and green areas
   (roof → nearest gutter → nearest tree pit / green area). It is an illustration, not a hydraulic model.
+  Zoomed out, it shows city-wide runoff routes downhill towards the Birsig, Birs, Wiese and Rhine,
+  pre-computed from Terrarium elevation tiles (AWS Open Data) by `node scripts/build-drainage.mjs`
+  → `public/data/drainage.geojson` (depression filling + D8 flow accumulation; terrain only, ignores sewers and buildings).
 - **Above / Below Surface**: a stylised cross-section of a sponge-city street, not to scale.
   Its **Concept** tab shows an illustrative infiltration-concept drawing (`public/concept/versickerungskonzept.jpg`).
 

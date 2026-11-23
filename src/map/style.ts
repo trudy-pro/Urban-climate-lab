@@ -1,4 +1,4 @@
-import type { StyleSpecification } from 'maplibre-gl';
+import type { ExpressionSpecification, StyleSpecification } from 'maplibre-gl';
 import { OPENFREEMAP_GLYPHS, OPENFREEMAP_TILEJSON } from '../config';
 
 /**
@@ -24,7 +24,25 @@ export const COLORS = {
   labelHalo: '#060a12',
 };
 
-export const BUILDING_EXTRUSION_COLOR = (low: string, high: string) =>
+export const STREET_COLORS = {
+  roadMinor: '#19263a',
+  roadMajor: '#223149',
+  roadWetMinor: '#1b2c42',
+  roadWetMajor: '#253a54',
+  buildingLow: '#1d2c44',
+  buildingHigh: '#2b4264',
+  buildingWetLow: '#1c2f48',
+  buildingWetHigh: '#2d496e',
+  glow: '#168baf',
+  line: '#39a8c6',
+};
+
+/** Fade the street palette in as the camera reaches building scale. */
+export function streetPaint(overview: string | ExpressionSpecification, street: string | ExpressionSpecification): ExpressionSpecification {
+  return ['interpolate', ['linear'], ['zoom'], 15.25, overview, 17.3, street];
+}
+
+export const BUILDING_EXTRUSION_COLOR = (low: string, high: string): ExpressionSpecification =>
   [
     'case',
     ['boolean', ['feature-state', 'selected'], false],
@@ -32,7 +50,7 @@ export const BUILDING_EXTRUSION_COLOR = (low: string, high: string) =>
     ['boolean', ['feature-state', 'hover'], false],
     '#3a5a86',
     ['interpolate', ['linear'], ['coalesce', ['get', 'render_height'], 8], 0, low, 22, low, 60, high],
-  ] as unknown as string;
+  ];
 
 const roadWidth = (base: number, top: number) =>
   ['interpolate', ['exponential', 1.6], ['zoom'], 11, base, 14, base * 3, 18, top] as unknown as number;

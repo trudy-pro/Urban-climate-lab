@@ -17,7 +17,7 @@ import {
   ARRIVAL_RADIUS_M,
   BS_BOUNDS,
   CLIMATE_LAYERS,
-  OVERVIEW,
+  FELLING_WMS,
   TARGET,
   wmsTileUrl,
   type CameraView,
@@ -37,18 +37,21 @@ import {
   waterFocusView,
   type JourneyStage,
 } from './journey';
-import { FlightCaption, JourneyCard, JourneyNav, SectionConnector } from './components/Journey';
-import { BUILDING_EXTRUSION_COLOR, COLORS, buildStyle } from './map/style';
+import { FlightCaption, JourneyCard, JourneyNav, MapStages, SectionConnector } from './components/Journey';
+import { BUILDING_EXTRUSION_COLOR, COLORS, STREET_COLORS, buildStyle, streetPaint } from './map/style';
 import { cubicBezier, idleOrbit, type FlightHandle } from './map/cinematic';
 import { areaM2, centroid, distanceM, inflate, type LngLatTuple } from './map/geo';
 import { pickFootprint } from './map/pick';
 import { FlowLayer } from './map/flows';
+import { DrainageLayer } from './map/drainage';
 import { fetchOsmBuilding } from './data/osm';
 import { fetchGwrBuilding } from './data/gwr';
 import { fetchTrees, type TreeCollection, type TreeProps } from './data/trees';
+import { fetchStations } from './data/stations';
 import { InfoPanel, type Selection } from './components/InfoPanel';
 import { CameraControls } from './components/CameraControls';
 import { EnvToolbar } from './components/EnvToolbar';
+import type { RainLevel } from './components/RainIntensity';
 import { ClimatePanel } from './components/ClimatePanel';
 import { RainOverlay } from './components/RainOverlay';
 import { SurfaceSection } from './components/SurfaceSection';
@@ -58,6 +61,8 @@ setWorkerUrl(workerUrl);
 type Phase = 'intro' | 'flying' | 'free';
 
 const EMPTY_FC = { type: 'FeatureCollection' as const, features: [] };
+const CITY_FLOW_HINT =
+  'City-wide: rain runs downhill towards the Birsig, Birs, Wiese and Rhine. Zoom in to street level to follow it from roofs to trees.';
 const smoothOut = cubicBezier(0.3, 0, 0.1, 1);
 // long, decelerating tail: the camera slows as it reaches the street (one continuous flyTo)
 const approach = cubicBezier(0.42, 0, 0.12, 1);
@@ -93,11 +98,12 @@ function journeyPadding(stage: JourneyStage | null): PaddingOptions {
   const h = window.innerHeight;
   if (w <= 760) {
     if (stage === 'below') return { top: 60, bottom: Math.round(h * 0.55), left: 0, right: 0 };
-    return { top: 110, bottom: Math.round(h * 0.34), left: 0, right: 0 };
+    if (stage === 'city') return { top: 82, bottom: Math.round(h * 0.48), left: 0, right: 0 };
+    return { top: 84, bottom: Math.round(h * 0.38), left: 0, right: 0 };
   }
   if (stage === 'below') return { top: 70, bottom: Math.round(h * 0.7), left: 0, right: 0 };
   // city overview: room for the headline, so Basel and the study area sit beside it
-  if (stage === 'city') return { top: 0, bottom: 0, left: Math.round(Math.min(560, w * 0.38)), right: 0 };
+  if (stage === 'city') return { top: 0, bottom: 0, left: Math.round(Math.min(380, w * 0.23)), right: 0 };
   // closer in, the study street stays in the middle of the screen throughout the flight
   return { top: 0, bottom: 0, left: 0, right: 0 };
 }
@@ -106,6 +112,7 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
   const flowRef = useRef<FlowLayer | null>(null);
+  const drainRef = useRef<DrainageLayer | null>(null);
   const flightRef = useRef<FlightHandle | null>(null);
   const stopOrbitRef = useRef<(() => void) | null>(null);
   const selectedIdRef = useRef<string | number | null>(null);
@@ -155,11 +162,11 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [phase, setPhaseState] = useState<Phase>('intro');
   const [unlocked, setUnlocked] = useState(false);
-  const [cam, setCam] = useState({ bearing: OVERVIEW.bearing, pitch: OVERVIEW.pitch, zoom: OVERVIEW.zoom, lng: OVERVIEW.center[0], lat: OVERVIEW.center[1] });
+  const [cam, setCam] = useState({ bearing: openingView.bearing, pitch: openingView.pitch, zoom: openingView.zoom, lng: openingView.center[0], lat: openingView.center[1] });
   const [selection, setSelection] = useState<Selection | null>(null);
 
   const [rain, setRain] = useState(false);
-  const [rainIntensity, setRainIntensity] = useState<0 | 1 | 2>(1);
+  const [rainIntensity, setRainIntensity] = useState<RainLevel>(1);
   const [flows, setFlows] = useState(false);
   const [surface, setSurface] = useState(false);
   const [flowStats, setFlowStats] = useState<{ lines: number; sinks: number } | null>(null);
@@ -171,6 +178,9 @@ export default function App() {
   const [climateOpacity, setClimateOpacity] = useState(0.62);
   const [climateLoading, setClimateLoading] = useState(false);
   const [treesOn, setTreesOn] = useState(false);
+  const [fellingOn, setFellingOn] = useState(false);
+  const [stationsOn, setStationsOn] = useState(false);
+  const [stationStatus, setStationStatus] = useState('meteoblue City Climate network · every 15 min');
   const [treeStatus, setTreeStatus] = useState('Tree cadastre · zoom in to load');
   const [treesVersion, setTreesVersion] = useState(0);
 
@@ -351,7 +361,7 @@ export default function App() {
           filter: ['==', ['get', 'kind'], 'street'],
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#45dcf0',
+            'line-color': streetPaint('#45dcf0', STREET_COLORS.glow),
             'line-width': ['interpolate', ['linear'], ['zoom'], 13, 4, 16, 16, 18, 34],
             'line-blur': ['interpolate', ['linear'], ['zoom'], 13, 4, 18, 22],
             'line-opacity': 0,
@@ -368,7 +378,7 @@ export default function App() {
           filter: ['==', ['get', 'kind'], 'street'],
           layout: { 'line-cap': 'round', 'line-join': 'round' },
           paint: {
-            'line-color': '#7fe9ff',
+            'line-color': streetPaint('#7fe9ff', STREET_COLORS.line),
             'line-width': ['interpolate', ['linear'], ['zoom'], 13, 1, 16, 2, 18, 3],
             'line-opacity': 0,
             'line-opacity-transition': fade,
@@ -415,13 +425,14 @@ export default function App() {
       // start with the attribution collapsed to the (i) button so it never covers the toolbar
       containerRef.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
       flowRef.current = new FlowLayer(map);
+      drainRef.current = new DrainageLayer(map);
       setReady(true);
       // front-page opening: drift from a distant, low view into the Basel overview, then turn slowly
       if (prefersReducedMotion()) {
         map.jumpTo({ ...cityView, padding: journeyPadding('city') });
       } else {
         const token = tokenRef.current;
-        map.easeTo({ ...cityView, padding: journeyPadding('city'), duration: 4200, easing: settle, essential: true });
+        map.easeTo({ ...cityView, padding: journeyPadding('city'), duration: 3600, easing: settle });
         map.once('moveend', () => {
           // only if nothing else has taken the camera since (Explore Basel, a drag, …)
           if (token === tokenRef.current && guidedRef.current && jStageRef.current === 'city') {
@@ -464,6 +475,7 @@ export default function App() {
       flightRef.current?.cancel();
       stopOrbitRef.current?.();
       flowRef.current?.destroy();
+      drainRef.current?.destroy();
       osmAbortRef.current?.abort();
       map.remove();
       mapRef.current = null;
@@ -784,6 +796,15 @@ export default function App() {
     setOffCourse(true);
   }, [stopCamera]);
 
+  const interruptCamera = useCallback(() => {
+    if (phaseRef.current === 'flying') pauseCamera();
+    else if (phaseRef.current === 'intro' || stopOrbitRef.current) {
+      ++tokenRef.current;
+      stopCamera();
+      setPhase('free');
+    }
+  }, [pauseCamera, stopCamera]);
+
   /** Leave the guided journey: full interface, inspection and all layers. */
   const exploreFreely = useCallback(() => {
     ++tokenRef.current;
@@ -816,18 +837,23 @@ export default function App() {
     map.flyTo({ ...cityView, duration: prefersReducedMotion() ? 0 : 4200, curve: 1.2, easing: smoothOut, essential: true });
   }, [clearSelection, stopCamera]);
 
-  /* manual interaction during the journey: the camera stops cleanly, the stage stays */
+  /* Give manual map gestures and keyboard navigation control immediately. */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
-    const onStart = (e: { originalEvent?: Event }) => {
-      if (e.originalEvent && guidedRef.current) setOffCourse(true);
+    const canvas = map.getCanvasContainer();
+    const onKey = (e: KeyboardEvent) => {
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '+', '-', '='].includes(e.key)) interruptCamera();
     };
-    map.on('movestart', onStart);
+    canvas.addEventListener('pointerdown', interruptCamera, true);
+    canvas.addEventListener('wheel', interruptCamera, { capture: true, passive: true });
+    canvas.addEventListener('keydown', onKey, true);
     return () => {
-      map.off('movestart', onStart);
+      canvas.removeEventListener('pointerdown', interruptCamera, true);
+      canvas.removeEventListener('wheel', interruptCamera, true);
+      canvas.removeEventListener('keydown', onKey, true);
     };
-  }, [ready]);
+  }, [ready, interruptCamera]);
 
   /* keep the framing right when the window changes size */
   useEffect(() => {
@@ -863,27 +889,33 @@ export default function App() {
     studyTagRef.current?.getElement().firstElementChild?.classList.toggle('is-on', s === 'city' || s === 'neighbourhood');
   }, [guided, jStage, ready]);
 
-  const zoomBy = (d: number) => mapRef.current?.easeTo({ zoom: mapRef.current.getZoom() + d, duration: 600, easing: smoothOut });
-  const rotateBy = (d: number) => mapRef.current?.easeTo({ bearing: mapRef.current.getBearing() + d, duration: 800, easing: smoothOut });
-  const north = () => mapRef.current?.easeTo({ bearing: 0, duration: 900, easing: smoothOut });
-  const tilt = () => {
-    const m = mapRef.current;
-    if (!m) return;
-    m.easeTo({ pitch: m.getPitch() > 20 ? 0 : 60, duration: 1000, easing: smoothOut });
+  const adjustCamera = (adjust: (map: MLMap) => { zoom?: number; bearing?: number; pitch?: number }, duration: number) => {
+    const map = mapRef.current;
+    if (!map) return;
+    interruptCamera();
+    map.easeTo({ ...adjust(map), duration: prefersReducedMotion() ? 0 : duration, easing: smoothOut });
   };
+  const zoomBy = (d: number) => adjustCamera((map) => ({ zoom: map.getZoom() + d }), 600);
+  const rotateBy = (d: number) => adjustCamera((map) => ({ bearing: map.getBearing() + d }), 800);
+  const north = () => adjustCamera(() => ({ bearing: 0 }), 900);
+  const tilt = () => adjustCamera((map) => ({ pitch: map.getPitch() > 20 ? 0 : 60 }), 1000);
 
   /* ------------------------------------------------------------------ rain: wet-street look */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
     const wet = rain;
+    const buildingColors = (palette: typeof COLORS | typeof STREET_COLORS) =>
+      wet
+        ? BUILDING_EXTRUSION_COLOR(palette.buildingWetLow, palette.buildingWetHigh)
+        : BUILDING_EXTRUSION_COLOR(palette.buildingLow, palette.buildingHigh);
     map.setPaintProperty(
       'buildings-3d',
       'fill-extrusion-color',
-      wet ? BUILDING_EXTRUSION_COLOR(COLORS.buildingWetLow, COLORS.buildingWetHigh) : BUILDING_EXTRUSION_COLOR(COLORS.buildingLow, COLORS.buildingHigh),
+      streetPaint(buildingColors(COLORS), buildingColors(STREET_COLORS)),
     );
-    map.setPaintProperty('roads-minor', 'line-color', wet ? '#1b2a40' : COLORS.roadMinor);
-    map.setPaintProperty('roads-major', 'line-color', wet ? '#223652' : COLORS.roadMajor);
+    map.setPaintProperty('roads-minor', 'line-color', wet ? streetPaint('#1b2a40', STREET_COLORS.roadWetMinor) : streetPaint(COLORS.roadMinor, STREET_COLORS.roadMinor));
+    map.setPaintProperty('roads-major', 'line-color', wet ? streetPaint('#223652', STREET_COLORS.roadWetMajor) : streetPaint(COLORS.roadMajor, STREET_COLORS.roadMajor));
     map.setSky({
       'sky-color': '#060a12',
       'horizon-color': wet ? '#1c2c47' : '#15233b',
@@ -901,8 +933,10 @@ export default function App() {
     const fl = flowRef.current;
     if (!map || !ready || !fl) return;
     const greens = ['park', 'landcover-green', 'landuse-green'];
+    const drain = drainRef.current;
     if (!flows) {
       fl.stop();
+      drain?.stop();
       setFlowStats(null);
       setFlowHint(null);
       setHeroKind(null);
@@ -910,6 +944,10 @@ export default function App() {
       return;
     }
     greens.forEach((id) => map.setPaintProperty(id, 'fill-color', '#0f3328'));
+    // city-wide runoff towards the rivers; fades out at street level where the roof → tree paths take over
+    drain?.start().then((ok) => {
+      if (!ok) flash('City-wide runoff routes could not be loaded.');
+    });
 
     let timer = 0;
     const rebuild = () => {
@@ -927,7 +965,7 @@ export default function App() {
           return;
         }
         if (map.getZoom() < 15) {
-          setFlowHint('Zoom closer to street level to see water flows.');
+          setFlowHint(CITY_FLOW_HINT);
           fl.build(null);
           fl.stop();
           return;
@@ -939,9 +977,6 @@ export default function App() {
         fl.start();
       }, 220);
     };
-    if (!guided && map.getZoom() < 15.5) {
-      map.easeTo({ zoom: 16.8, pitch: Math.max(map.getPitch(), 55), duration: 1400, easing: smoothOut });
-    }
     map.once('idle', rebuild);
     if (!guided) map.on('moveend', rebuild);
     else if (flowRef.current?.getHero() && (followingRef.current || arrivedRef.current)) fl.start();
@@ -954,8 +989,9 @@ export default function App() {
 
   /* ------------------------------------------------------------------ trees (Basel tree cadastre) */
   useEffect(() => {
-    if (unlocked) setTreesOn(true);
-  }, [unlocked]);
+    // trees are the infiltration points for the street-level water paths
+    if (unlocked || (flows && !guided)) setTreesOn(true);
+  }, [unlocked, flows, guided]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1042,6 +1078,107 @@ export default function App() {
     if (map?.getLayer('climate')) map.setPaintProperty('climate', 'raster-opacity', climateOpacity, { validate: false });
   }, [climateOpacity]);
 
+  /* ------------------------------------------------------------------ live sensors (meteoblue City Climate network) */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const ids = ['stations', 'stations-label'];
+    if (!stationsOn) {
+      ids.forEach((id) => map.getLayer(id) && map.removeLayer(id));
+      if (map.getSource('stations')) map.removeSource('stations');
+      setStationStatus('Live sensors · hidden');
+      return;
+    }
+    if (!map.getSource('stations')) {
+      map.addSource('stations', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer({
+        id: 'stations',
+        type: 'circle',
+        source: 'stations',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 4, 16, 9],
+          'circle-color': [
+            'case',
+            ['==', ['get', 'temp'], null],
+            '#5d6a82',
+            ['interpolate', ['linear'], ['get', 'temp'], -5, '#3b6fd1', 5, '#58b6d6', 15, '#f1e37a', 25, '#f39a3c', 35, '#d9412b'],
+          ],
+          'circle-stroke-color': '#060a12',
+          'circle-stroke-width': 1.5,
+          'circle-pitch-alignment': 'map',
+        },
+      });
+      map.addLayer({
+        id: 'stations-label',
+        type: 'symbol',
+        source: 'stations',
+        minzoom: 13,
+        filter: ['!=', ['get', 'temp'], null],
+        layout: {
+          'text-field': [
+            'format',
+            ['concat', ['number-format', ['get', 'temp'], { 'max-fraction-digits': 1 }], '°'],
+            {},
+            ['step', ['zoom'], '', 15.5, ['concat', '\n', ['get', 'name']]],
+            { 'font-scale': 0.8 },
+          ],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 12,
+          'text-offset': [0, 1.3],
+          'text-anchor': 'top',
+        },
+        paint: { 'text-color': '#e6edf8', 'text-halo-color': '#060a12', 'text-halo-width': 1.4 },
+      });
+    }
+    const ctl = new AbortController();
+    const load = () => {
+      setStationStatus('Loading live sensors…');
+      fetchStations(ctl.signal)
+        .then((fc) => {
+          (map.getSource('stations') as GeoJSONSource | undefined)?.setData(fc);
+          const latest = fc.features.reduce((t, f) => (f.properties.time > t ? f.properties.time : t), '');
+          const at = latest ? new Date(latest).toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' }) : '–';
+          setStationStatus(`${fc.features.length} sensors reporting · latest ${at}`);
+        })
+        .catch((e) => {
+          if ((e as Error).name === 'AbortError') return;
+          setStationStatus('Live sensors unavailable right now');
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 5 * 60 * 1000);
+    return () => {
+      ctl.abort();
+      window.clearInterval(timer);
+    };
+  }, [stationsOn, ready]);
+
+  /* ------------------------------------------------------------------ felling & replacement list (WMS geo.bs.ch) */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    if (!fellingOn) {
+      if (map.getLayer('felling')) map.removeLayer('felling');
+      if (map.getSource('felling')) map.removeSource('felling');
+      return;
+    }
+    if (map.getSource('felling')) return;
+    map.addSource('felling', {
+      type: 'raster',
+      tiles: [wmsTileUrl(FELLING_WMS)],
+      tileSize: 512,
+      bounds: BS_BOUNDS,
+      minzoom: 11,
+      maxzoom: 19,
+      attribution: '',
+    });
+    // above the climate raster (which sits below 'building-flat'), below the 3D buildings
+    map.addLayer(
+      { id: 'felling', type: 'raster', source: 'felling', paint: { 'raster-opacity': 0.95, 'raster-fade-duration': 350 } },
+      map.getLayer('buildings-3d') ? 'buildings-3d' : undefined,
+    );
+  }, [fellingOn, ready]);
+
   const selectClimate = (id: string | null) => {
     setClimateId(id);
     const l = CLIMATE_LAYERS.find((x) => x.id === id);
@@ -1079,10 +1216,11 @@ export default function App() {
   const showIntro = guided && jStage === 'city';
   const nearTarget = distanceM([cam.lng, cam.lat], TARGET.center) < ARRIVAL_RADIUS_M;
   const stage = stageOf(cam.zoom, nearTarget);
+  const guidedAtStreet = guided && unlocked && stage === 'street' && (jStage === 'street' || jStage === 'water');
 
   return (
     <div
-      className={`app phase-${phase} ${rain ? 'is-raining' : ''} ${surface ? 'has-surface' : ''} ${guided ? `is-guided j-${jStage}` : 'is-exploring'}`}
+      className={`app phase-${phase} ${rain ? 'is-raining' : ''} ${flows ? 'is-flowing' : ''} ${surface ? 'has-surface' : ''} ${guided ? `is-guided j-${jStage}` : 'is-exploring'}`}
     >
       <div ref={containerRef} className="map" />
       <div className="vignette" aria-hidden="true" />
@@ -1114,6 +1252,7 @@ export default function App() {
             <span>Basel · Beneath the Surface</span>
           </span>
         </div>
+        {!fatal && guided && <MapStages stage={stage} ready={ready} onGo={goStage} />}
         {!fatal && !guided && (
           <div className="resume glass">
             <button onClick={() => goStage(jStage)} disabled={!ready}>
@@ -1125,18 +1264,29 @@ export default function App() {
         )}
       </header>
 
-      {/* Location HUD (technical readout: explore mode only) */}
-      <header className={`hud ${guided ? 'is-hidden' : ''}`}>
+      {/* Live camera readout */}
+      <aside className="hud glass" aria-label="Live view">
         <div className="hud__loc">
           <strong>{STAGE_LABEL[stage]}</strong>
           <span>
             {cam.lat.toFixed(4)}° N · {cam.lng.toFixed(4)}° E · z{cam.zoom.toFixed(1)} · {Math.round(cam.pitch)}°
           </span>
         </div>
-      </header>
+        {showIntro && (
+          <div className="hud__live">
+            <p className="eyebrow">Live view</p>
+            <dl className="hud__metrics">
+              <div><dt>Zoom</dt><dd>{cam.zoom.toFixed(1)}</dd></div>
+              <div><dt>Pitch</dt><dd>{Math.round(cam.pitch)}°</dd></div>
+              <div><dt>Bearing</dt><dd>{(Math.round(cam.bearing) + 360) % 360}°</dd></div>
+            </dl>
+            <p className="hud__centre">Centre <b>{cam.lat.toFixed(4)}° N · {cam.lng.toFixed(4)}° E</b></p>
+          </div>
+        )}
+      </aside>
 
       {/* Intro */}
-      <section className={`intro ${showIntro ? '' : 'is-leaving'}`} aria-hidden={!showIntro}>
+      <section className={`intro ${showIntro ? '' : 'is-leaving'}`} aria-hidden={!showIntro} inert={!showIntro}>
         <div className="intro__inner">
           <p className="eyebrow">
             <span className="jcard__step">1 / 5</span> Basel, Switzerland
@@ -1146,7 +1296,7 @@ export default function App() {
           </h1>
           <p className="intro__sub">Travel from Basel to Therwilerstrasse and discover what happens to rainwater above and beneath the street.</p>
           <div className="intro__actions">
-            <button className="cta" onClick={() => goStage('neighbourhood')} disabled={!ready}>
+            <button className="cta" onClick={() => goStage('street')} disabled={!ready}>
               <span>{ready ? 'Explore Basel' : 'Loading Basel…'}</span>
               <svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
@@ -1184,7 +1334,7 @@ export default function App() {
         </>
       )}
 
-      {!fatal && !showIntro && (
+      {!fatal && ready && (
         <CameraControls
           bearing={cam.bearing}
           pitch={cam.pitch}
@@ -1199,35 +1349,45 @@ export default function App() {
       )}
 
       {!fatal && !guided && (
-        <>
-          <ClimatePanel
-            open={climateOpen}
-            onToggleOpen={() => setClimateOpen((o) => !o)}
-            activeId={climateId}
-            onSelect={selectClimate}
-            year={climateYear}
-            onYear={setClimateYear}
-            opacity={climateOpacity}
-            onOpacity={setClimateOpacity}
-            trees={treesOn}
-            onTrees={() => setTreesOn((t) => !t)}
-            treeStatus={treeStatus}
-            loadingTiles={climateLoading}
-          />
-          <EnvToolbar
-            visible={phase !== 'flying' && !surface}
-            unlocked={unlocked}
-            rain={rain}
-            flows={flows}
-            surface={surface}
-            flowStats={flowStats}
-            flowHint={flowHint}
-            onRain={() => setRain((r) => !r)}
-            onFlows={() => setFlows((f) => !f)}
-            onSurface={() => setSurface((s) => !s)}
-            onFlyTarget={flyTarget}
-          />
-        </>
+        <ClimatePanel
+          open={climateOpen}
+          onToggleOpen={() => setClimateOpen((o) => !o)}
+          activeId={climateId}
+          onSelect={selectClimate}
+          year={climateYear}
+          onYear={setClimateYear}
+          opacity={climateOpacity}
+          onOpacity={setClimateOpacity}
+          trees={treesOn}
+          onTrees={() => setTreesOn((t) => !t)}
+          treeStatus={treeStatus}
+          felling={fellingOn}
+          onFelling={() => setFellingOn((f) => !f)}
+          stations={stationsOn}
+          onStations={() => setStationsOn((s) => !s)}
+          stationStatus={stationStatus}
+          loadingTiles={climateLoading}
+        />
+      )}
+
+      {!fatal && (
+        <EnvToolbar
+          visible={!surface && !flying && (showIntro || guidedAtStreet || !guided)}
+          opening={showIntro}
+          ready={ready}
+          unlocked={guided ? guidedAtStreet : true}
+          rain={rain}
+          intensity={rainIntensity}
+          onIntensity={setRainIntensity}
+          flows={flows}
+          surface={surface}
+          flowStats={flowStats}
+          flowHint={flowHint}
+          onRain={() => setRain((r) => !r)}
+          onFlows={() => setFlows((f) => !f)}
+          onSurface={() => setSurface((s) => !s)}
+          onFlyTarget={guided ? () => goStage('street') : flyTarget}
+        />
       )}
 
       <InfoPanel sel={selection} onClose={clearSelection} />

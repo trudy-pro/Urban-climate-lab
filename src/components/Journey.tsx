@@ -1,6 +1,28 @@
 import { useEffect, useRef } from 'react';
 import { DISCLOSURE, JOURNEY, stageIndex, type JourneyStage } from '../journey';
 
+type MapStage = 'city' | 'neighbourhood' | 'street';
+
+const MAP_STAGES: { key: MapStage; label: string }[] = [
+  { key: 'city', label: 'City' },
+  { key: 'neighbourhood', label: 'Neighbourhood' },
+  { key: 'street', label: 'Therwilerstrasse' },
+];
+
+export function MapStages({ stage, ready, onGo }: {
+  stage: MapStage; ready: boolean; onGo: (s: MapStage) => void;
+}) {
+  return (
+    <nav className="map-stages glass" aria-label="Map stages">
+      {MAP_STAGES.map(({ key, label }, index) => (
+        <button key={key} aria-current={key === stage ? 'step' : undefined} disabled={!ready} onClick={() => onGo(key)}>
+          <span className="map-stages__number" aria-hidden="true">{index + 1}</span>{label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 /* ------------------------------------------------------------------ step navigator (bottom) */
 
 interface NavProps {
@@ -28,7 +50,8 @@ export function JourneyNav(p: NavProps) {
           <svg viewBox="0 0 24 24" width="16" height="16"><path d="M14 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
         <ol className="journey__steps">
-          {JOURNEY.map((j, i) => {
+          {JOURNEY.slice(3).map((j, offset) => {
+            const i = offset + 3;
             const state = i === idx ? 'is-on' : i < idx ? 'is-done' : '';
             return (
               <li key={j.key}>
@@ -69,13 +92,20 @@ const CAPTIONS: Record<'city' | 'neighbourhood' | 'street', [string, string]> = 
 };
 
 /** Names the scale the camera is passing through while it flies. */
-export function FlightCaption({ show, stage }: { show: boolean; stage: 'city' | 'neighbourhood' | 'street' }) {
-  const [title, sub] = CAPTIONS[stage];
+export function FlightCaption({ show, stage }: { show: boolean; stage: MapStage }) {
+  const [title, subtitle] = CAPTIONS[stage];
   return (
-    <div className={`fcaption ${show ? 'is-on' : ''}`} aria-live="polite">
-      <b key={title}>{title}</b>
-      <span>{sub}</span>
-    </div>
+    <>
+      <div className="fcaption" aria-hidden="true">
+        {MAP_STAGES.map(({ key }) => (
+          <div className={show && stage === key ? 'is-on' : ''} key={key}>
+            <b>{CAPTIONS[key][0]}</b>
+            <span>{CAPTIONS[key][1]}</span>
+          </div>
+        ))}
+      </div>
+      <span className="sr-only" aria-live="polite">{show ? `${title}. ${subtitle}` : ''}</span>
+    </>
   );
 }
 
@@ -130,7 +160,7 @@ export function JourneyCard(p: CardProps) {
   }
 
   return (
-    <section className={`jcard glass ${p.flying ? 'is-flying' : ''}`} aria-live="polite" key={p.stage}>
+    <section className={`jcard glass ${p.flying ? 'is-flying' : ''}`} inert={p.flying} aria-live="polite" key={p.stage}>
       <p className="eyebrow">
         <span className="jcard__step">{idx + 1} / {JOURNEY.length}</span> {eyebrow}
       </p>
