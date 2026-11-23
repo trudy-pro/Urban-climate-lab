@@ -36,9 +36,6 @@ Anything not in a dataset is shown as "Data unavailable".
   → `public/data/drainage.geojson` (depression filling + D8 flow accumulation; terrain only, ignores sewers and buildings).
 - **Above / Below Surface**: a stylised cross-section of a sponge-city street, not to scale.
   Its **Concept** tab shows an illustrative infiltration-concept drawing (`public/concept/versickerungskonzept.jpg`).
-- **Underground layers in 3D** (from the section, or `#underground`): rotate the Therwilerstrasse
-  cutaway, pull apart its layers and make it rain. **Water flows** traces seven illustrative paths
-  on the same model, including runoff, sewer flow, infiltration, storage, root uptake and seepage.
 
 ## Structure
 

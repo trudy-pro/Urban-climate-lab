@@ -132,28 +132,6 @@ export function buildStyle(): StyleSpecification {
         },
       },
       {
-        id: 'city-river-tint',
-        type: 'fill',
-        source: 'omt',
-        'source-layer': 'water',
-        filter: ['==', ['get', 'class'], 'river'],
-        layout: { visibility: 'none' },
-        paint: { 'fill-color': '#12a6ce', 'fill-opacity': 0.25 },
-      },
-      ...(['glow', 'centre'] as const).map((kind) => ({
-        id: `city-rhine-${kind}`,
-        type: 'line' as const,
-        source: 'omt',
-        'source-layer': 'waterway',
-        filter: ['in', ['get', 'name'], ['literal', ['Rhein', 'Rhine']]] as unknown as boolean,
-        layout: { 'visibility': 'none' as const, 'line-cap': 'round' as const, 'line-join': 'round' as const },
-        paint: kind === 'glow' ? {
-          'line-color': '#26bdec', 'line-opacity': 0.66, 'line-width': 10, 'line-blur': 9,
-        } : {
-          'line-color': '#b4edff', 'line-opacity': 0.8, 'line-width': 1.8, 'line-dasharray': [2.2, 4.6],
-        },
-      })),
-      {
         id: 'waterway',
         type: 'line',
         source: 'omt',

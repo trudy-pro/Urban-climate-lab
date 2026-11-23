@@ -1,126 +1,152 @@
 import { useEffect, useRef } from 'react';
-import type { RainLevel } from './RainIntensity';
 
-const BANDS = [
-  { speed: 420, length: 14, width: 0.8, opacity: 0.28, share: 0.46 },
-  { speed: 660, length: 23, width: 1.05, opacity: 0.40, share: 0.36 },
-  { speed: 920, length: 34, width: 1.35, opacity: 0.50, share: 0.18 },
-];
-const DENSITY = [0.44, 0.74, 1];
-const WIND = 0.2;
-const MARGIN = 48;
+interface Drop {
+  x: number;
+  y: number;
+  len: number;
+  speed: number;
+  alpha: number;
+  depth: number;
+}
+interface Splash {
+  x: number;
+  y: number;
+  r: number;
+  life: number;
+}
 
-export function RainOverlay({ active, intensity }: { active: boolean; intensity: RainLevel }) {
+/**
+ * Screen-space animated rainfall drawn on a canvas above the map. Purely visual — it does not
+ * block map interaction (pointer-events: none). Fades in / out smoothly.
+ */
+/** Share of drops shown per intensity (Gentle / Moderate / Heavy). Visual density only. */
+const DENSITY = [0.35, 0.65, 1];
+
+export function RainOverlay({ active, bearing, intensity = 1 }: { active: boolean; bearing: number; intensity?: 0 | 1 | 2 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const weather = useRef({ active, intensity });
-  const wake = useRef<() => void>(() => {});
-  weather.current = { active, intensity };
+  const activeRef = useRef(active);
+  const bearingRef = useRef(bearing);
+  const kickRef = useRef<() => void>(() => {});
+  activeRef.current = active;
+  bearingRef.current = bearing;
+  const intensityRef = useRef(intensity);
+  intensityRef.current = intensity;
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx) return;
-    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-    let width = 0;
-    let height = 0;
-    let drops: { x: number; y: number; scale: number }[][] = [];
-    let veil: CanvasGradient;
-    let frame = 0;
-    let last = 0;
-    let strength = 0;
-    let density = DENSITY[weather.current.intensity];
+    if (active) kickRef.current();
+  }, [active]);
 
-    const draw = (now: number) => {
-      frame = 0;
-      const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));
+  useEffect(() => {
+    const canvas = canvasRef.current!;
+    const ctx = canvas.getContext('2d')!;
+    let raf = 0;
+    let w = 0;
+    let h = 0;
+    let dpr = 1;
+    let level = 0; // 0..1 fade
+    let drops: Drop[] = [];
+    const splashes: Splash[] = [];
+    let last = performance.now();
+    let running = false;
+
+    const makeDrop = (randomY: boolean): Drop => {
+      const depth = Math.random();
+      return {
+        x: Math.random() * (w + 200) - 100,
+        y: randomY ? Math.random() * h : -40 - Math.random() * 200,
+        len: 10 + depth * 22,
+        speed: 700 + depth * 900,
+        alpha: 0.12 + depth * 0.38,
+        depth,
+      };
+    };
+
+    const resize = () => {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      w = canvas.clientWidth;
+      h = canvas.clientHeight;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const count = Math.round(Math.min(900, (w * h) / 1700));
+      drops = Array.from({ length: count }, () => makeDrop(true));
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(canvas);
+
+    const frame = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      const { active, intensity } = weather.current;
-      const target = active ? 1 : 0;
-      strength += (target - strength) * (1 - Math.exp(-dt * (active ? 7 : 4)));
-      density += (DENSITY[intensity] - density) * (1 - Math.exp(-dt * 7));
-      if (motion.matches) {
-        strength = target;
-        density = DENSITY[intensity];
-      }
+      level += ((activeRef.current ? 1 : 0) - level) * Math.min(1, dt * 1.6);
 
-      ctx.clearRect(0, 0, width, height);
-      if (strength <= 0.01 && !active) {
-        strength = 0;
-        return;
-      }
+      ctx.clearRect(0, 0, w, h);
+      if (level > 0.003) {
+        // wind slant follows map rotation a little, for a sense of "weather in the world"
+        const wind = 0.16 + Math.sin((bearingRef.current * Math.PI) / 180) * 0.08;
+        // wet atmospheric veil
+        const g = ctx.createLinearGradient(0, 0, 0, h);
+        g.addColorStop(0, `rgba(30,52,86,${0.22 * level})`);
+        g.addColorStop(1, `rgba(8,14,26,${0.12 * level})`);
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
 
-      ctx.globalAlpha = strength * density;
-      ctx.fillStyle = veil;
-      ctx.fillRect(0, 0, width, height);
-      ctx.globalAlpha = 1;
-
-      if (!motion.matches) {
-        for (const [index, band] of BANDS.entries()) {
-          const streaks = drops[index];
-          const count = Math.min(streaks.length, Math.ceil(streaks.length * density));
-          ctx.lineWidth = band.width;
-          ctx.strokeStyle = `rgba(171, 208, 248, ${band.opacity * strength})`;
-          ctx.beginPath();
-          for (let i = 0; i < count; i++) {
-            const streak = streaks[i];
-            const fall = band.speed * streak.scale * dt;
-            streak.y += fall;
-            streak.x += fall * WIND;
-            if (streak.y > height + MARGIN) {
-              streak.y = -MARGIN;
-              streak.x = Math.random() * (width + MARGIN) - MARGIN;
-            } else if (streak.x > width + MARGIN) {
-              streak.x = -MARGIN;
+        ctx.lineCap = 'round';
+        const visible = Math.floor(drops.length * level * DENSITY[intensityRef.current]);
+        for (let i = 0; i < drops.length; i++) {
+          const d = drops[i];
+          d.y += d.speed * dt;
+          d.x += d.speed * wind * dt;
+          if (d.y > h * (0.55 + d.depth * 0.45)) {
+            if (i < visible && Math.random() < 0.35) {
+              splashes.push({ x: d.x, y: d.y, r: 0, life: 1 });
             }
-            const length = band.length * streak.scale;
-            ctx.moveTo(streak.x, streak.y);
-            ctx.lineTo(streak.x - length * WIND, streak.y - length);
+            Object.assign(d, makeDrop(false));
           }
+          if (i >= visible) continue;
+          ctx.strokeStyle = `rgba(170,205,255,${d.alpha * level})`;
+          ctx.lineWidth = 0.6 + d.depth * 0.9;
+          ctx.beginPath();
+          ctx.moveTo(d.x, d.y);
+          ctx.lineTo(d.x - d.len * wind, d.y - d.len);
           ctx.stroke();
         }
-        frame = requestAnimationFrame(draw);
+
+        for (let i = splashes.length - 1; i >= 0; i--) {
+          const s = splashes[i];
+          s.life -= dt * 2.4;
+          s.r += dt * 26;
+          if (s.life <= 0) {
+            splashes.splice(i, 1);
+            continue;
+          }
+          ctx.strokeStyle = `rgba(150,200,255,${0.35 * s.life * level})`;
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.ellipse(s.x, s.y, s.r, s.r * 0.35, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        if (splashes.length > 400) splashes.splice(0, splashes.length - 400);
       }
+      if (!activeRef.current && level <= 0.003) {
+        running = false; // idle: stop the loop until rain is switched on again
+        ctx.clearRect(0, 0, w, h);
+        return;
+      }
+      raf = requestAnimationFrame(frame);
     };
-
-    const start = () => {
-      if (frame) return;
+    kickRef.current = () => {
+      if (running) return;
+      running = true;
       last = performance.now();
-      frame = requestAnimationFrame(draw);
+      raf = requestAnimationFrame(frame);
     };
-    const resize = () => {
-      width = canvas.clientWidth;
-      height = canvas.clientHeight;
-      const scale = Math.min(2, window.devicePixelRatio || 1);
-      canvas.width = Math.round(width * scale);
-      canvas.height = Math.round(height * scale);
-      ctx.setTransform(scale, 0, 0, scale, 0, 0);
-      ctx.lineCap = 'round';
-      veil = ctx.createLinearGradient(0, 0, 0, Math.max(1, height));
-      veil.addColorStop(0, 'rgba(77, 113, 159, 0.2)');
-      veil.addColorStop(1, 'rgba(30, 54, 84, 0.03)');
-      const count = Math.min(410, Math.max(90, Math.round(width * height / 3400)));
-      drops = BANDS.map(({ share }) => Array.from({ length: Math.ceil(count * share) }, () => ({
-        x: Math.random() * (width + MARGIN * 2) - MARGIN,
-        y: Math.random() * (height + MARGIN * 2) - MARGIN,
-        scale: 0.72 + Math.random() * 0.58,
-      })));
-      start();
-    };
-
-    wake.current = start;
-    resize();
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
-    motion.addEventListener('change', start);
+    if (activeRef.current) kickRef.current();
     return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      motion.removeEventListener('change', start);
-      wake.current = () => {};
+      cancelAnimationFrame(raf);
+      ro.disconnect();
     };
   }, []);
-
-  useEffect(() => wake.current(), [active, intensity]);
 
   return <canvas ref={canvasRef} className="rain-canvas" aria-hidden="true" />;
 }

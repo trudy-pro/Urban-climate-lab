@@ -1,18 +1,6 @@
 const P = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
 
 export const Icon = {
-  arrowRight: () => (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path {...P} d="M5 12h14m-6-6 6 6-6 6" /></svg>
-  ),
-  navigation: () => (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path {...P} d="m21 3-7 18-3-8-8-3 18-7Z" /></svg>
-  ),
-  rainCloud: () => (
-    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-      <path fill="#edf6ff" d="M6.5 15a4.5 4.5 0 0 1-.4-9 6 6 0 0 1 11.4 1.4 3.8 3.8 0 0 1 .7 7.6Z" />
-      <path {...P} stroke="#63d4f2" d="m8 17-1.4 2.3m6.1-2.3-2 3.6m6-3.6-1.4 2.3" />
-    </svg>
-  ),
   plus: () => (
     <svg viewBox="0 0 24 24" width="18" height="18"><path {...P} d="M12 5v14M5 12h14" /></svg>
   ),

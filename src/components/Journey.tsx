@@ -121,7 +121,6 @@ interface CardProps {
   heroKind: 'tree' | 'green' | null;
   pathsReady: boolean;
   onNext: () => void;
-  onRain: () => void;
   onFollow: () => void;
   onBelow: () => void;
   onRecenter: () => void;
@@ -145,7 +144,7 @@ export function JourneyCard(p: CardProps) {
     eyebrow = 'Study street · Bachletten';
     title = 'Paulusgasse / Therwilerstrasse';
     body = 'What happens to rain when it reaches this street?';
-    action = p.raining ? { label: 'Follow the runoff', onClick: p.onNext } : { label: 'Make It Rain', onClick: p.onRain };
+    action = { label: p.raining ? 'Show the Water' : 'Make It Rain', onClick: p.onNext };
   } else if (p.stage === 'water') {
     eyebrow = 'Follow the water';
     title = p.arrived ? 'The water has soaked in' : 'Where does the rain go?';

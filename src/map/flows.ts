@@ -69,7 +69,6 @@ export class FlowLayer {
   private lines: FlowLine[] = [];
   private raf = 0;
   private running = false;
-  private ambientDrops = true;
   private lastSinkPulse = 0;
   private t0 = 0;
   private hero: FlowLine | null = null;
@@ -356,7 +355,7 @@ export class FlowLayer {
         ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: this.hero.coords } }
         : empty(),
     );
-    this.writeHeroPoints(this.ambientDrops && this.hero ? this.hero.coords[0] : null);
+    this.writeHeroPoints(this.hero ? this.hero.coords[0] : null);
 
     const usedSinks = sinks.filter((s) => s.n > 0);
     (map.getSource(SRC_LINES) as GeoJSONSource).setData({
@@ -389,26 +388,24 @@ export class FlowLayer {
     const tick = (now: number) => {
       if (!this.running) return;
       const t = (now - this.t0) / 1000;
+      const features: Feature<Point>[] = [];
       this.tickHero(now);
-      if (this.ambientDrops) {
-        const features: Feature<Point>[] = [];
-        for (const l of this.lines) {
-          if (l === this.hero) continue;
-          const n = Math.max(1, Math.floor(l.total / SPACING));
-          for (let k = 0; k < n; k++) {
-            const d = (t * SPEED + l.offset + k * SPACING) % l.total;
-            features.push({
-              type: 'Feature',
-              properties: { p: d / l.total },
-              geometry: { type: 'Point', coordinates: along(l.coords, l.cum, d) },
-            });
-          }
+      for (const l of this.lines) {
+        if (l === this.hero) continue;
+        const n = Math.max(1, Math.floor(l.total / SPACING));
+        for (let k = 0; k < n; k++) {
+          const d = (t * SPEED + l.offset + k * SPACING) % l.total;
+          features.push({
+            type: 'Feature',
+            properties: { p: d / l.total },
+            geometry: { type: 'Point', coordinates: along(l.coords, l.cum, d) },
+          });
         }
-        (this.map.getSource(SRC_PARTICLES) as GeoJSONSource | undefined)?.setData({
-          type: 'FeatureCollection',
-          features,
-        });
       }
+      (this.map.getSource(SRC_PARTICLES) as GeoJSONSource | undefined)?.setData({
+        type: 'FeatureCollection',
+        features,
+      });
       if (now - this.lastSinkPulse > 40 && this.map.getLayer('flow-sinks-pulse')) {
         this.lastSinkPulse = now;
         const ph = (t % 2.2) / 2.2;
@@ -424,15 +421,6 @@ export class FlowLayer {
     this.running = false;
     cancelAnimationFrame(this.raf);
     this.setVisible(false);
-  }
-
-  setAmbientDrops(visible: boolean) {
-    if (this.ambientDrops === visible) return;
-    this.ambientDrops = visible;
-    if (!visible) {
-      (this.map.getSource(SRC_PARTICLES) as GeoJSONSource | undefined)?.setData(empty());
-      if (this.heroMode === 'loop') this.writeHeroPoints(null);
-    }
   }
 
   /** The featured path, if one was built. */
@@ -455,7 +443,6 @@ export class FlowLayer {
     this.heroMode = 'loop';
     this.heroStart = performance.now();
     this.onArrive = null;
-    if (!this.ambientDrops) this.writeHeroPoints(null);
   }
 
   private writeHeroPoints(drop: LngLatTuple | null) {
@@ -471,7 +458,7 @@ export class FlowLayer {
 
   private tickHero(now: number) {
     const h = this.hero;
-    if (!h || (!this.ambientDrops && this.heroMode === 'loop')) return;
+    if (!h) return;
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     // a walking-pace droplet that is easy to follow with the eye
     const runMs = reduced ? 1 : Math.max(3800, Math.min(7000, h.total * 70));
