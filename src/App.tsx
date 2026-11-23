@@ -25,6 +25,7 @@ import {
 import {
   BASEL_LABEL_AT,
   PAULUSGASSE,
+  STREET_BEARING,
   STUDY_CENTER,
   THERWILERSTRASSE,
   ORBIT_DEG_PER_SEC,
@@ -55,10 +56,7 @@ import type { RainLevel } from './components/RainIntensity';
 import { ClimatePanel } from './components/ClimatePanel';
 import { RainOverlay } from './components/RainOverlay';
 import { SurfaceSection } from './components/SurfaceSection';
-import { UndergroundView, type UgView } from './components/UndergroundView';
-import { UndergroundLayer } from './map/underground';
-import { STREET_BEARING } from './journey';
-import type { LayerId } from './components/section/geometry';
+import { UndergroundView } from './components/UndergroundView';
 
 setWorkerUrl(workerUrl);
 
@@ -71,6 +69,9 @@ const smoothOut = cubicBezier(0.3, 0, 0.1, 1);
 // long, decelerating tail: the camera slows as it reaches the street (one continuous flyTo)
 const approach = cubicBezier(0.42, 0, 0.12, 1);
 const settle = cubicBezier(0.25, 0.1, 0.25, 1);
+// the dive into the street: slow start, accelerating as the camera reaches the ground
+const dive = cubicBezier(0.55, 0, 0.75, 0.25);
+const NO_PADDING = { top: 0, bottom: 0, left: 0, right: 0 };
 
 function webglSupported(): boolean {
   try {
@@ -174,14 +175,6 @@ export default function App() {
   const [flows, setFlows] = useState(false);
   const [surface, setSurface] = useState(false);
   const [underground, setUnderground] = useState(() => typeof location !== 'undefined' && location.hash === '#underground');
-  const [ugFocus, setUgFocus] = useState<LayerId | null>(null);
-  const [ugApart, setUgApart] = useState(false);
-  const [ugWater, setUgWater] = useState(true);
-  const [ugView, setUgView] = useState<UgView>('map');
-  const [ugFlowStep, setUgFlowStep] = useState<string | null>(null);
-  const ugFlowSvgRef = useRef<SVGSVGElement>(null);
-  const ugLayerRef = useRef<UndergroundLayer | null>(null);
-  const ugLabelsRef = useRef<HTMLDivElement>(null);
   const [flowStats, setFlowStats] = useState<{ lines: number; sinks: number } | null>(null);
   const [flowHint, setFlowHint] = useState<string | null>(null);
 
@@ -1208,11 +1201,83 @@ export default function App() {
     return { x: p.x, y: p.y };
   }, []);
 
-  /* ------------------------------------------------------------------ underground: the layers in 3D under the street */
   useEffect(() => {
+    const updateRoute = () => setUnderground(location.hash === '#underground');
+    window.addEventListener('hashchange', updateRoute);
+    return () => window.removeEventListener('hashchange', updateRoute);
+  }, []);
+
+  /* the 3D underground is entered through the map: the camera dives into Therwilerstrasse,
+     the map dims, and the cutaway rises out of the street; leaving reverses it */
+  const [ugDiving, setUgDiving] = useState(false);
+  const [ugLeaving, setUgLeaving] = useState(false);
+  const ugReturnRef = useRef<CameraView | null>(null);
+
+  const openUnderground = () => {
     const map = mapRef.current;
-    if (!map || !ready || !underground) return;
-    // stop any camera choreography (opening drift, orbit, journey flight); from the front page, leave the journey
+    const show = () => {
+      history.replaceState(null, '', '#underground');
+      setUgDiving(false);
+      setUnderground(true);
+    };
+    if (surface) setSurface(false);
+    if (!map || !ready || prefersReducedMotion()) {
+      show();
+      return;
+    }
+    const token = ++tokenRef.current;
+    stopCamera();
+    const c = map.getCenter();
+    ugReturnRef.current = { center: [c.lng, c.lat], zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() };
+    setUgDiving(true);
+    setPhase('flying');
+    const descend = () => {
+      if (token !== tokenRef.current) return;
+      animateTo('ease', { center: STUDY_CENTER, zoom: 19.4, pitch: 74, bearing: STREET_BEARING, padding: NO_PADDING }, 2100, () => {
+        if (token !== tokenRef.current) return;
+        flightRef.current = null;
+        setPhase('free');
+        show();
+      }, dive);
+    };
+    const away = distanceM([c.lng, c.lat], STUDY_CENTER);
+    // first reach the street (from anywhere in Basel), then go down into it
+    if (away > 450 || map.getZoom() < 16) animateTo('fly', { ...streetView, padding: NO_PADDING }, away > 3000 ? 7000 : 4200, descend, approach);
+    else descend();
+  };
+
+  const leaveUnderground = () => {
+    if (location.hash === '#underground') history.replaceState(null, '', location.pathname + location.search);
+    setUnderground(false);
+  };
+
+  /** sink the cutaway back into the street, then rise the camera to where the visitor came from */
+  const riseFromUnderground = (then?: () => void) => {
+    if (ugLeaving) return;
+    setUgLeaving(true);
+    window.setTimeout(() => {
+      leaveUnderground();
+      setUgLeaving(false);
+      if (guidedRef.current && jStageRef.current === 'below') setJStage('water');
+      const map = mapRef.current;
+      const back = ugReturnRef.current ?? streetView;
+      ugReturnRef.current = null;
+      if (map) {
+        const token = ++tokenRef.current;
+        stopCamera();
+        setPhase('flying');
+        animateTo('ease', { ...back, padding: journeyPadding(guidedRef.current ? jStageRef.current : null) }, 2000, () => {
+          if (token !== tokenRef.current) return;
+          flightRef.current = null;
+          setPhase('free');
+        }, settle);
+      }
+      then?.();
+    }, prefersReducedMotion() ? 0 : 750);
+  };
+
+  useEffect(() => {
+    if (!ready || !underground) return;
     if (guidedRef.current && jStageRef.current === 'city') exploreFreely();
     else {
       ++tokenRef.current;
@@ -1220,76 +1285,7 @@ export default function App() {
       setPhase('free');
       setFlying(false);
     }
-    const layer = new UndergroundLayer({ labels: ugLabelsRef.current });
-    layer.flowSvg = ugFlowSvgRef.current;
-    ugLayerRef.current = layer;
-    map.addLayer(layer);
-    map.setMaxZoom(20.6);
-    const prev = { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() };
-    const bOpacity = map.getPaintProperty('buildings-3d', 'fill-extrusion-opacity');
-    map.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', 0.18);
-    const reduced = prefersReducedMotion();
-    map.flyTo({
-      center: layer.lookAt(),
-      zoom: 19.45,
-      pitch: 56,
-      // three-quarter view onto the cut face at the south end of the block
-      bearing: STREET_BEARING - 10,
-      padding: { top: 0, bottom: 0, left: 0, right: Math.min(360, window.innerWidth * 0.3) },
-      duration: reduced ? 0 : 2600,
-      essential: true,
-    });
-    if (location.hash !== '#underground') history.replaceState(null, '', '#underground');
-    return () => {
-      ugLayerRef.current = null;
-      if (map.getLayer(layer.id)) map.removeLayer(layer.id);
-      map.setMaxZoom(19.5);
-      map.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', bOpacity);
-      map.easeTo({ ...prev, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: reduced ? 0 : 1600 });
-      if (location.hash === '#underground') history.replaceState(null, '', location.pathname + location.search);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [underground, ready]);
-
-  useEffect(() => {
-    const l = ugLayerRef.current;
-    if (!l) return;
-    l.focus = ugFocus;
-    l.explodeTarget = ugApart ? 1 : 0;
-    l.water = ugWater;
-    l.view = ugView;
-  }, [ugFocus, ugApart, ugWater, ugView, underground, ready]);
-
-  // water-flows view looks more squarely at the cut face, where the paths are drawn
-  const ugViewMounted = useRef(false);
-  useEffect(() => {
-    const map = mapRef.current;
-    const l = ugLayerRef.current;
-    if (!ugViewMounted.current) {
-      ugViewMounted.current = true;
-      return;
-    }
-    if (!map || !l || !underground) return;
-    const flows = ugView === 'flows';
-    // drops are a cloud over the block; the drawn paths carry the story in this view
-    setUgWater(!flows);
-    map.easeTo({
-      center: flows ? l.lookAtFace() : l.lookAt(),
-      zoom: flows ? 20.2 : 19.45,
-      // look almost horizontally at the vertical cut face
-      pitch: flows ? 76 : 56,
-      bearing: STREET_BEARING - (flows ? 2 : 10),
-      duration: prefersReducedMotion() ? 0 : 1300,
-      easing: smoothOut,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ugView]);
-
-  const openUnderground = () => {
-    setUgFocus(null);
-    setUgFlowStep(null);
-    setUnderground(true);
-  };
+  }, [underground, ready, exploreFreely, stopCamera]);
 
   const closeSurface = useCallback(() => {
     // in the journey, closing the section steps back up to the water on the street
@@ -1297,11 +1293,12 @@ export default function App() {
     else setSurface(false);
   }, [goStage]);
 
+  const closeUnderground = () => riseFromUnderground();
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (underground) setUnderground(false);
-      else if (surface) closeSurface();
+      if (e.key !== 'Escape' || underground) return;
+      if (surface) closeSurface();
       else if (selection) clearSelection();
       else if (climateOpen) setClimateOpen(false);
       else if (flying) pauseCamera();
@@ -1317,11 +1314,12 @@ export default function App() {
 
   return (
     <div
-      className={`app phase-${phase} ${rain ? 'is-raining' : ''} ${flows ? 'is-flowing' : ''} ${surface ? 'has-surface' : ''} ${underground ? 'is-underground' : ''} ${guided ? `is-guided j-${jStage}` : 'is-exploring'}`}
+      className={`app phase-${phase} ${rain ? 'is-raining' : ''} ${flows ? 'is-flowing' : ''} ${surface ? 'has-surface' : ''} ${guided ? `is-guided j-${jStage}` : 'is-exploring'}`}
     >
+      <div inert={underground} className={`ug-host ${ugDiving ? 'is-diving' : ''} ${underground ? 'is-under' : ''}`}>
       <div ref={containerRef} className="map" />
       <div className="vignette" aria-hidden="true" />
-      <RainOverlay active={rain} bearing={cam.bearing} intensity={rainIntensity} />
+      <RainOverlay active={rain && !underground} bearing={cam.bearing} intensity={rainIntensity} />
 
       {fatal && (
         <div className="fatal">
@@ -1489,33 +1487,6 @@ export default function App() {
 
       <InfoPanel sel={selection} onClose={clearSelection} />
       <SectionConnector active={guided && jStage === 'below' && surface} project={projectHero} />
-      <UndergroundView
-        ref={ugLabelsRef}
-        open={underground}
-        view={ugView}
-        onView={(v) => {
-          setUgView(v);
-          setUgFocus(null);
-          setUgFlowStep(null);
-        }}
-        flowStep={ugFlowStep}
-        onFlowStep={setUgFlowStep}
-        flowSvgRef={ugFlowSvgRef}
-        focus={ugFocus}
-        onFocus={setUgFocus}
-        apart={ugApart}
-        onApart={setUgApart}
-        water={ugWater}
-        onWater={() => setUgWater((w) => !w)}
-        onSection={() => {
-          setUnderground(false);
-          setSurface(true);
-        }}
-        onClose={() => {
-          setUnderground(false);
-          if (surface) closeSurface();
-        }}
-      />
       <SurfaceSection
         onUnderground={openUnderground}
         open={surface}
@@ -1532,6 +1503,14 @@ export default function App() {
       <div className={`toast glass ${notice ? 'is-on' : ''}`} role="status">
         {notice}
       </div>
+      </div>
+      {underground && (
+        <UndergroundView
+          leaving={ugLeaving}
+          onSection={() => riseFromUnderground(() => setSurface(true))}
+          onClose={closeUnderground}
+        />
+      )}
     </div>
   );
 }
