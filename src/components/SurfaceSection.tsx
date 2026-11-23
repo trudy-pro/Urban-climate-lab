@@ -8,7 +8,6 @@ import {
   HERO_SLOT,
   INLET_X,
   JOURNEY_STEPS,
-  LAYERS,
   PAVERS,
   PLANTED,
   ROOTS,
@@ -64,16 +63,16 @@ interface Props {
   onClose: () => void;
   /** Set when the section is opened from the guided journey, after following a drop on the map. */
   fromStreet?: { kind: 'tree' | 'green' | null } | null;
+  /** opens the Underground page: the layers in 3D under the real street */
+  onUnderground: () => void;
 }
 
 /**
  * Explanatory street section (stylised, not to scale, not an engineering model): how rain moves over
  * and into a sponge-city street. Particles show the behaviour; arrows are secondary cues.
  */
-export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, flows, onFlows, onClose, fromStreet = null }: Props) {
+export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, flows, onFlows, onClose, fromStreet = null, onUnderground }: Props) {
   const [mode, setMode] = useState<Mode>('above');
-  const [layersOpen, setLayersOpen] = useState(false);
-  const [focus, setFocus] = useState<LayerId | null>(null);
   const [journey, setJourney] = useState<JourneyState>('idle');
   const [step, setStep] = useState(0);
   const reduced = useMemo(reducedMotion, []);
@@ -135,8 +134,6 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
     const sim = simRef.current;
     if (!sim) return;
     setMode('both');
-    setFocus(null);
-    setLayersOpen(false);
     setStep(0);
     setJourney('playing');
     sim.playJourney();
@@ -158,8 +155,6 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
   useEffect(() => {
     if (!open) {
       endJourney();
-      setFocus(null);
-      setLayersOpen(false);
       return;
     }
     setMode('above');
@@ -174,16 +169,13 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
 
   const exploreLayers = () => {
     endJourney();
-    setMode('both');
-    setLayersOpen(true);
-    setFocus('surface');
+    onUnderground();
   };
 
   const showAbove = mode !== 'below';
   const showBelow = mode !== 'above';
   const journeyOn = journey === 'playing' || journey === 'paused';
-  const activeLayer: LayerId | null = journeyOn ? JOURNEY_STEPS[step].layer : focus;
-  const layerInfo = LAYERS.find((l) => l.id === focus);
+  const activeLayer: LayerId | null = journeyOn ? JOURNEY_STEPS[step].layer : null;
 
   /* static drawing data */
   const topsoilGrains = useMemo(() => grains(5, PLANTED.x0, PLANTED.x1, (x) => surfaceY(x) + 2, (x) => surfaceY(x) + 20, 7), []);
@@ -255,30 +247,11 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
           <div className="sx-secondary">
             <RainIntensity intensity={intensity} onIntensity={onIntensity} />
             <button className={`sx-chip ${flows ? 'is-on' : ''}`} aria-pressed={flows} onClick={onFlows}>Water flows on map</button>
-            <button
-              className={`sx-chip ${layersOpen ? 'is-on' : ''}`}
-              aria-pressed={layersOpen}
-              onClick={() => {
-                if (layersOpen) {
-                  setLayersOpen(false);
-                  setFocus(null);
-                } else exploreLayers();
-              }}
-            >
-              Underground layers
+            <button className="sx-chip" onClick={onUnderground}>
+              Underground layers in 3D
             </button>
             <button className="sx-chip" onClick={onClose}>Return to map</button>
           </div>
-        </div>
-      )}
-      {layersOpen && !journeyOn && (
-        <div className="sx-layers" role="radiogroup" aria-label="Underground layers">
-          {LAYERS.map((l) => (
-            <button key={l.id} role="radio" aria-checked={focus === l.id} className={`sx-layer ${focus === l.id ? 'is-on' : ''}`} onClick={() => setFocus(focus === l.id ? null : l.id)}>
-              <i className={`sx-swatch sx-swatch--${l.id}`} />
-              {l.label}
-            </button>
-          ))}
         </div>
       )}
 
@@ -304,13 +277,6 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
               <button className="sx-btn" onClick={exploreLayers}>Explore Layers</button>
               <button className="sx-btn" onClick={onClose}>Return to Street</button>
             </div>
-          </div>
-        )}
-        {!journeyOn && journey !== 'done' && layerInfo && (
-          <div className="sx-caption" aria-live="polite">
-            <p key={layerInfo.id}>
-              <i className={`sx-swatch sx-swatch--${layerInfo.id}`} /> <strong>{layerInfo.label}.</strong> {layerInfo.text}
-            </p>
           </div>
         )}
 

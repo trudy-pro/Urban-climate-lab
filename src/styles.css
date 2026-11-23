@@ -862,3 +862,15 @@ a:hover { text-decoration: underline; }
   .xsec .canopy, .xsec.raining .entry-glow { animation: none; }
   .connector { transition: none; }
 }
+
+/* ================================================================ into the 3D underground */
+/* diving: the map darkens as the camera goes down into the street */
+.ug-host .map { transition: filter 1.8s var(--ease); }
+.ug-host.is-diving .map { filter: brightness(0.55) saturate(0.85); }
+/* underground: the real street stays visible, dimmed, around the cutaway */
+.ug-host.is-under .map { filter: brightness(0.42) saturate(0.75) blur(1.5px); }
+.ug-host > :not(.map):not(.vignette) { transition: opacity 0.6s var(--ease), visibility 0s linear 0s; }
+/* visibility (not only opacity): some controls keep opacity 1 from their entrance animation */
+.ug-host.is-diving > :not(.map):not(.vignette),
+.ug-host.is-under > :not(.map):not(.vignette) { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.6s var(--ease), visibility 0s linear 0.6s; }
+@media (prefers-reduced-motion: reduce) { .ug-host .map { transition: none; } }

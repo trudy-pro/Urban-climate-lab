@@ -36,6 +36,10 @@ Anything not in a dataset is shown as "Data unavailable".
   → `public/data/drainage.geojson` (depression filling + D8 flow accumulation; terrain only, ignores sewers and buildings).
 - **Above / Below Surface**: a stylised cross-section of a sponge-city street, not to scale.
   Its **Concept** tab shows an illustrative infiltration-concept drawing (`public/concept/versickerungskonzept.jpg`).
+- **Beneath the Street** (from the street section, or `#underground`): a full-screen React Three Fiber cutaway
+  of Therwilerstrasse. Orbit the model, pull five material slabs apart, and inspect the water overlay.
+  Rain traces conceptual routes to the sewer, through permeable surfaces and into storage near the roots.
+  The cutaway is illustrative and its depths are exaggerated.
 
 ## Structure
 
