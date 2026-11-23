@@ -282,8 +282,6 @@ export class UndergroundLayer implements CustomLayerInterface {
   private pipe: Range = { first: 0, count: 0 };
   /** 'map': the block in its street · 'flows': map dimmed, layers see-through, water paths drawn */
   view: 'map' | 'flows' = 'map';
-  /** Map view shows the 3D block model on top (components/UndergroundBlock); the map then skips its own block */
-  hideBlock = false;
   private dim = 0;
   flowSvg: SVGSVGElement | null = null;
   private drops: Drop[] = [];
@@ -512,11 +510,6 @@ export class UndergroundLayer implements CustomLayerInterface {
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       gl.enable(gl.DEPTH_TEST);
       gl.depthMask(true);
-    }
-
-    if (this.hideBlock && this.view === 'map') {
-      if (this.dim > 0.01) this.map.triggerRepaint();
-      return;
     }
 
     gl.useProgram(this.prog);

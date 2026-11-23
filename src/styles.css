@@ -939,14 +939,3 @@ a:hover { text-decoration: underline; }
 .ug__badge text { fill: #060a12; font: 700 11px var(--font); }
 .ug__n { display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; border-radius: 50%; color: #060a12; font-size: 11px; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .ug__flow-line { animation: none; stroke-dasharray: none; } }
-
-/* ---- underground Map tab: the 3D street block sits under the heading and the Map / Water flows panel */
-.beneath.ugb {
-  position: fixed; inset: 0; z-index: 29; isolation: isolate;
-  background: radial-gradient(ellipse 70% 60% at 45% 55%, rgba(7, 13, 26, 0.35) 0%, rgba(7, 13, 26, 0.78) 70%, rgba(7, 13, 26, 0.92) 100%);
-  animation: ugb-in 0.9s var(--ease) both;
-}
-@keyframes ugb-in { from { opacity: 0; } }
-/* the map's own block labels are replaced by the model's labels in this tab */
-.app.is-underground .ug:not(.is-flows) .ug__labels { display: none; }
-@media (prefers-reduced-motion: reduce) { .beneath.ugb { animation: none; } }
