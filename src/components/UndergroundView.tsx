@@ -1,6 +1,6 @@
-import { forwardRef, type Ref } from 'react';
+import type { Ref } from 'react';
 import { LAYERS, type LayerId } from './section/geometry';
-import { DEPTH_EXAGGERATION, FLOW_STEPS } from '../map/underground';
+import { FLOW_STEPS } from './section/flowPaths';
 
 export type UgView = 'map' | 'flows';
 
@@ -19,16 +19,11 @@ interface Props {
   onWater: () => void;
   onSection: () => void;
   onClose: () => void;
-  /** SVG the map layer draws the water paths into */
+  /** SVG the cutaway scene projects the water paths onto */
   flowSvgRef: Ref<SVGSVGElement>;
 }
 
-/**
- * Underground page: the street's layers as 3D volumes under the real Therwilerstrasse.
- * Two views: Map (the block in its street) and Water flows (map dimmed, layers see-through, water paths).
- * Labels and paths are positioned every frame by the map layer (see map/underground.ts) through the refs.
- */
-export const UndergroundView = forwardRef<HTMLDivElement, Props>(function UndergroundView(p, labelsRef) {
+export function UndergroundView(p: Props) {
   const flows = p.view === 'flows';
   const info = LAYERS.find((l) => l.id === p.focus);
   const step = FLOW_STEPS.find((s) => s.id === p.flowStep);
@@ -40,29 +35,7 @@ export const UndergroundView = forwardRef<HTMLDivElement, Props>(function Underg
 
   return (
     <div className={`ug ${p.open ? 'is-open' : ''} ${flows ? 'is-flows' : ''}`} aria-hidden={!p.open} inert={!p.open}>
-      <div className="ug__labels" ref={labelsRef}>
-        <svg className="ug__lines" aria-hidden="true">
-          {LAYERS.map((l) => (
-            <g key={l.id} data-layer={l.id} className={p.focus === l.id ? 'is-on' : p.focus ? 'is-dim' : ''}>
-              <line />
-              <circle r="3" />
-            </g>
-          ))}
-        </svg>
-        {LAYERS.map((l) => (
-          <button
-            key={l.id}
-            data-layer={l.id}
-            className={`ug__tag ${p.focus === l.id ? 'is-on' : ''} ${p.focus && p.focus !== l.id ? 'is-dim' : ''}`}
-            onClick={() => p.onFocus(p.focus === l.id ? null : l.id)}
-          >
-            <i className={`sx-swatch sx-swatch--${l.id}`} />
-            {l.label}
-          </button>
-        ))}
-      </div>
-
-      <svg className="ug__flows" ref={p.flowSvgRef} aria-hidden="true">
+      {p.open && flows && <svg className="ug__flows" ref={p.flowSvgRef} aria-hidden="true">
         {FLOW_STEPS.map((s, i) => (
           <g
             key={s.id}
@@ -78,17 +51,7 @@ export const UndergroundView = forwardRef<HTMLDivElement, Props>(function Underg
             </g>
           </g>
         ))}
-      </svg>
-
-      <header className="glass ug__head">
-        <p className="eyebrow">Underground · Therwilerstrasse</p>
-        <h2>{flows ? 'Where the rain goes' : 'The layers beneath the street'}</h2>
-        <p className="muted">
-          {flows
-            ? 'Conceptual paths, not measured flows. Pick a step to follow it through the ground.'
-            : `Stylised block cut under the real street, not a survey. Depth exaggerated ×${DEPTH_EXAGGERATION}. Drag to orbit, scroll to zoom.`}
-        </p>
-      </header>
+      </svg>}
 
       <aside className="glass ug__panel">
         <div className="segmented ug__views" role="tablist" aria-label="Underground view">
@@ -101,7 +64,7 @@ export const UndergroundView = forwardRef<HTMLDivElement, Props>(function Underg
             <button role="radio" aria-checked={!p.apart} className={!p.apart ? 'on' : ''} onClick={() => p.onApart(false)}>Together</button>
             <button role="radio" aria-checked={p.apart} className={p.apart ? 'on' : ''} onClick={() => p.onApart(true)}>Pulled apart</button>
           </div>
-          <button className={`sx-chip ${p.water ? 'is-on' : ''}`} aria-pressed={p.water} onClick={p.onWater}>Drops</button>
+          <button className={`sx-chip ${p.water ? 'is-on' : ''}`} aria-label="Rain over the layers" aria-pressed={p.water} onClick={p.onWater}>{p.water ? 'Stop rain' : 'Make it rain'}</button>
         </div>
 
         {flows ? (
@@ -153,4 +116,4 @@ export const UndergroundView = forwardRef<HTMLDivElement, Props>(function Underg
       </aside>
     </div>
   );
-});
+}

@@ -1,11 +1,14 @@
-import { useLayoutEffect, useMemo, useRef, type ComponentRef, type PointerEvent } from 'react';
+import { useLayoutEffect, useMemo, useRef, type ComponentRef, type PointerEvent, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Edges, Html, OrbitControls } from '@react-three/drei';
 import {
   type Camera, CanvasTexture, DynamicDrawUsage, PCFShadowMap, Group, LineSegments, MathUtils, OrthographicCamera, Vector3,
 } from 'three';
 import { LAYERS, LENGTH, SLABS, WIDTH, zeroOffsets, type LayerKey, type ModelState, type SlabKey } from './data';
-import { BLOCK_BAND as BAND, BLOCK_DEPTH, BlockBody, BlockWater, LABEL_Y } from './BlockModel';
+import type { RainLevel } from '../RainIntensity';
+import { FLOW_STEPS } from '../section/flowPaths';
+import { ROOTZONE } from '../section/geometry';
+import { BLOCK_BAND as BAND, BLOCK_DEPTH, BlockBody, BlockWater, LABEL_Y, StreetRain, layerAt, sx, sy } from './BlockModel';
 
 const HOME_OFFSET = new Vector3(22, 17.4, 35);
 
@@ -24,6 +27,10 @@ function freeArea(canvas: HTMLCanvasElement) {
   let left = head ? head.left : 16;
   let right = box.right - 16;
   let top = head ? head.bottom + 12 : box.top;
+  if (head && rail && rail.left - head.right > 360 && head.width > 0) {
+    left = head.right + 18;
+    top = box.top + 72;
+  }
   let bottom = bar ? bar.top - 14 : box.bottom;
   if (rail && rail.width > 0) {
     // side rail on wide screens, bottom sheet on narrow ones
@@ -42,6 +49,8 @@ const HOME_Y = -BLOCK_DEPTH * 0.42;
 export type CameraCommand = 'left' | 'right' | 'up' | 'down' | 'near' | 'far';
 
 interface SceneProps {
+  showFlows: boolean;
+  flowSvgRef: RefObject<SVGSVGElement | null>;
   /** opening sequence: how many slabs have been revealed, from the deepest up (0–5) */
   revealed: number;
   /** slow turn of the camera while the layers are revealed */
@@ -50,6 +59,7 @@ interface SceneProps {
   onReady?: () => void;
   apart: boolean;
   raining: boolean;
+  rainIntensity: RainLevel;
   labels: boolean;
   reduced: boolean;
   selected: LayerKey | null;
@@ -259,7 +269,7 @@ function Floor({ model }: { model: ModelState }) {
   );
 }
 
-function CameraRig({ apart, reset, reduced, spinning, model, cameraCommand, onHover }: Pick<SceneProps, 'apart' | 'reset' | 'reduced' | 'spinning' | 'cameraCommand' | 'onHover'> & { model: ModelState }) {
+function CameraRig({ apart, reset, reduced, spinning, showFlows, model, cameraCommand, onHover }: Pick<SceneProps, 'apart' | 'reset' | 'reduced' | 'spinning' | 'showFlows' | 'cameraCommand' | 'onHover'> & { model: ModelState }) {
   const controls = useRef<ComponentRef<typeof OrbitControls>>(null);
   const { size, gl, camera, invalidate } = useThree();
   const cam = camera as OrthographicCamera;
@@ -274,27 +284,36 @@ function CameraRig({ apart, reset, reduced, spinning, model, cameraCommand, onHo
 
   useLayoutEffect(() => {
     const orbit = controls.current!;
-    const area = freeArea(gl.domElement);
-    const next = Math.min(area.w / 30.5, area.h / (apart ? 34 : 17.8));
-    // shift the view so the model's centre lands in the middle of the free area
-    const shiftX = area.x + area.w / 2 - size.width / 2;
-    const shiftY = area.y + area.h / 2 - size.height / 2;
-    cam.setViewOffset(size.width, size.height, -shiftX, -shiftY, size.width, size.height);
-    if (initial.current) {
-      homeTarget.set(0, HOME_Y, 0.16);
-      orbit.target.copy(homeTarget);
-      camera.position.copy(homeTarget).add(HOME_OFFSET);
-      cam.zoom = next;
-      cam.updateProjectionMatrix();
-      orbit.update();
-      fit.current = next;
-      initial.current = false;
-    }
-    baseZoom.current = next;
-    orbit.minZoom = next * 0.67;
-    orbit.maxZoom = next * 2.4;
-    invalidate();
-  }, [apart, cam, camera, gl, homeTarget, invalidate, size.height, size.width]);
+    const fitCamera = () => {
+      const area = freeArea(gl.domElement);
+      const next = Math.min(area.w / 30.5, area.h / (apart ? 34 : 17.8));
+      // shift the view so the model's centre lands in the middle of the free area
+      const shiftX = area.x + area.w / 2 - size.width / 2;
+      const shiftY = area.y + area.h / 2 - size.height / 2;
+      cam.setViewOffset(size.width, size.height, -shiftX, -shiftY, size.width, size.height);
+      if (initial.current) {
+        homeTarget.set(0, HOME_Y, 0.16);
+        orbit.target.copy(homeTarget);
+        camera.position.copy(homeTarget).add(HOME_OFFSET);
+        cam.zoom = next;
+        cam.updateProjectionMatrix();
+        orbit.update();
+        fit.current = next;
+        initial.current = false;
+      }
+      baseZoom.current = next;
+      orbit.minZoom = next * 0.67;
+      orbit.maxZoom = next * 2.4;
+      invalidate();
+    };
+    fitCamera();
+    const resize = new ResizeObserver(fitCamera);
+    const story = gl.domElement.closest('.beneath')?.querySelector('.ug__head');
+    const panel = document.querySelector('.ug__panel');
+    if (story) resize.observe(story);
+    if (panel) resize.observe(panel);
+    return () => resize.disconnect();
+  }, [apart, cam, camera, gl, homeTarget, invalidate, showFlows, size.height, size.width]);
 
   useLayoutEffect(() => {
     if (reset === 0) return;
@@ -362,6 +381,42 @@ function CameraRig({ apart, reset, reduced, spinning, model, cameraCommand, onHo
   );
 }
 
+const CUT_FACE_PATHS = FLOW_STEPS.map((step) => step.pts.map(([x, y]) => {
+  const withinRoots = ((x - ROOTZONE.cx) / ROOTZONE.rx) ** 2 + ((y - ROOTZONE.cy) / ROOTZONE.ry) ** 2 < 1;
+  let slab = layerAt(x, y);
+  if (step.id === 'runoff') slab = 'surface';
+  if (step.id === 'sewer') slab = y <= 179 ? 'surface' : 'deep';
+  if (step.id === 'roots' && withinRoots) slab = 'roots';
+  return { x: sx(x), y: sy(y), slab, revealAt: SLABS.length - SLABS.indexOf(slab) };
+}));
+
+function FlowPaths({ model, flowSvgRef, revealed }: Pick<SceneProps, 'flowSvgRef' | 'revealed'> & { model: ModelState }) {
+  const point = useMemo(() => new Vector3(), []);
+  useFrame(({ camera, size }) => {
+    const svg = flowSvgRef.current;
+    if (!svg) return;
+    // The paths are on the front cut face, so turning the block around hides them.
+    const facingCut = camera.position.z > LENGTH / 2 + 1;
+    camera.updateMatrixWorld();
+    for (const [index, vertices] of CUT_FACE_PATHS.entries()) {
+      const group = svg.children[index] as SVGGElement;
+      const visible = facingCut && vertices.every((vertex) => revealed >= vertex.revealAt);
+      group.style.visibility = visible ? 'visible' : 'hidden';
+      if (!visible) continue;
+      const points = vertices.map(({ x, y, slab }) => {
+        point.set(x, y + model.offset[slab], LENGTH / 2 + 0.07).project(camera);
+        return `${((point.x + 1) * size.width / 2).toFixed(1)} ${((1 - point.y) * size.height / 2).toFixed(1)}`;
+      });
+      const path = 'M' + points.join(' L');
+      if (group.children[0].getAttribute('d') === path) continue;
+      group.children[0].setAttribute('d', path);
+      group.children[1].setAttribute('d', path);
+      group.children[2].setAttribute('transform', `translate(${points[Math.floor(points.length / 2)]})`);
+    }
+  });
+  return null;
+}
+
 function Model(props: SceneProps) {
   const { invalidate } = useThree();
   const model = useMemo<ModelState>(() => ({ offset: zeroOffsets(), manual: zeroOffsets(), down: false }), []);
@@ -386,8 +441,10 @@ function Model(props: SceneProps) {
       <Floor model={model} />
       {SLABS.map((layer, index) => <Slab key={layer} layer={layer} index={index} model={model} {...props} />)}
       <Alignment model={model} />
-      <BlockWater model={model} raining={props.raining} active={props.selected === 'water'} reduced={props.reduced} />
+      {props.raining && props.revealed === 5 && <StreetRain model={model} intensity={props.rainIntensity} reduced={props.reduced} />}
+      <BlockWater model={model} raining={props.raining && props.revealed === 5} active={props.selected === 'water'} reduced={props.reduced} />
       <CameraRig {...props} model={model} />
+      {props.showFlows && <FlowPaths flowSvgRef={props.flowSvgRef} revealed={props.revealed} model={model} />}
     </>
   );
 }

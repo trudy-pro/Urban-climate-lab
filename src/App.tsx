@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AttributionControl,
   Map as MLMap,
@@ -44,6 +45,8 @@ import { areaM2, centroid, distanceM, inflate, type LngLatTuple } from './map/ge
 import { pickFootprint } from './map/pick';
 import { FlowLayer } from './map/flows';
 import { DrainageLayer } from './map/drainage';
+import { installRiverCurrents } from './map/riverCurrents';
+import type { SurfaceWaterLayer } from './map/surfaceWater';
 import { fetchOsmBuilding } from './data/osm';
 import { fetchGwrBuilding } from './data/gwr';
 import { fetchTrees, type TreeCollection, type TreeProps } from './data/trees';
@@ -51,13 +54,14 @@ import { fetchStations } from './data/stations';
 import { InfoPanel, type Selection } from './components/InfoPanel';
 import { CameraControls } from './components/CameraControls';
 import { EnvToolbar } from './components/EnvToolbar';
+import { CityMapActions, CityOverview } from './components/CityOverview';
+import { TherwilerstrasseMarker } from './components/TherwilerstrasseMarker';
 import type { RainLevel } from './components/RainIntensity';
 import { ClimatePanel } from './components/ClimatePanel';
 import { RainOverlay } from './components/RainOverlay';
 import { SurfaceSection } from './components/SurfaceSection';
 import { UndergroundView, type UgView } from './components/UndergroundView';
-import { UndergroundBlock } from './components/UndergroundBlock';
-import { UndergroundLayer } from './map/underground';
+import { loadStreetScene, UndergroundBlock } from './components/UndergroundBlock';
 import { STREET_BEARING } from './journey';
 import type { LayerId } from './components/section/geometry';
 
@@ -76,7 +80,7 @@ const settle = cubicBezier(0.25, 0.1, 0.25, 1);
 function webglSupported(): boolean {
   try {
     const c = document.createElement('canvas');
-    return !!(c.getContext('webgl2') || c.getContext('webgl'));
+    return !!c.getContext('webgl2');
   } catch {
     return false;
   }
@@ -103,17 +107,18 @@ function journeyPadding(stage: JourneyStage | null): PaddingOptions {
   const h = window.innerHeight;
   if (w <= 760) {
     if (stage === 'below') return { top: 60, bottom: Math.round(h * 0.55), left: 0, right: 0 };
-    if (stage === 'city') return { top: 82, bottom: Math.round(h * 0.48), left: 0, right: 0 };
+    if (stage === 'city') return { top: 82, bottom: Math.min(h * 0.48, 300), left: 0, right: 0 };
     return { top: 84, bottom: Math.round(h * 0.38), left: 0, right: 0 };
   }
   if (stage === 'below') return { top: 70, bottom: Math.round(h * 0.7), left: 0, right: 0 };
-  // city overview: room for the headline, so Basel and the study area sit beside it
-  if (stage === 'city') return { top: 0, bottom: 0, left: Math.round(Math.min(380, w * 0.23)), right: 0 };
+  if (stage === 'city') return { top: 0, bottom: 0, left: Math.min(w * 0.25, 440), right: 0 };
   // closer in, the study street stays in the middle of the screen throughout the flight
   return { top: 0, bottom: 0, left: 0, right: 0 };
 }
 
-export default function App() {
+export default function App({ startFreely = false }: { startFreely?: boolean }) {
+  const firstView = startFreely ? cityView : openingView;
+  const firstPhase = startFreely ? 'free' : 'intro';
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
   const flowRef = useRef<FlowLayer | null>(null);
@@ -125,17 +130,17 @@ export default function App() {
   const osmAbortRef = useRef<AbortController | null>(null);
   const treesRef = useRef<TreeCollection | null>(null);
   const treesCenterRef = useRef<LngLatTuple | null>(null);
-  const phaseRef = useRef<Phase>('intro');
+  const phaseRef = useRef<Phase>(firstPhase);
   const tokenRef = useRef(0);
-  const guidedRef = useRef(true);
+  const guidedRef = useRef(!startFreely);
   const jStageRef = useRef<JourneyStage>('city');
   const followingRef = useRef(false);
   const baselTagRef = useRef<Marker | null>(null);
   const prevCamRef = useRef<CameraView | null>(null);
-  const studyTagRef = useRef<Marker | null>(null);
+  const [studyMarkerAnchor, setStudyMarkerAnchor] = useState<HTMLDivElement | null>(null);
 
   /* guided journey */
-  const [guided, setGuidedState] = useState(true);
+  const [guided, setGuidedState] = useState(!startFreely);
   const [jStage, setJStageState] = useState<JourneyStage>('city');
   const [reached, setReached] = useState(0);
   const [flying, setFlying] = useState(false);
@@ -163,13 +168,16 @@ export default function App() {
   };
 
   const [ready, setReady] = useState(false);
+  const [basemapVisible, setBasemapVisible] = useState(false);
+  const [basemapDelayed, setBasemapDelayed] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [phase, setPhaseState] = useState<Phase>('intro');
+  const [phase, setPhaseState] = useState<Phase>(firstPhase);
   const [unlocked, setUnlocked] = useState(false);
-  const [cam, setCam] = useState({ bearing: openingView.bearing, pitch: openingView.pitch, zoom: openingView.zoom, lng: openingView.center[0], lat: openingView.center[1] });
+  const [cam, setCam] = useState({ bearing: firstView.bearing, pitch: firstView.pitch, zoom: firstView.zoom, lng: firstView.center[0], lat: firstView.center[1] });
   const [selection, setSelection] = useState<Selection | null>(null);
 
+  const [surfaceWater, setSurfaceWater] = useState<SurfaceWaterLayer | null>(null);
   const [rain, setRain] = useState(false);
   const [rainIntensity, setRainIntensity] = useState<RainLevel>(1);
   const [flows, setFlows] = useState(false);
@@ -182,8 +190,6 @@ export default function App() {
   const [ugView, setUgView] = useState<UgView>('map');
   const [ugFlowStep, setUgFlowStep] = useState<string | null>(null);
   const ugFlowSvgRef = useRef<SVGSVGElement>(null);
-  const ugLayerRef = useRef<UndergroundLayer | null>(null);
-  const ugLabelsRef = useRef<HTMLDivElement>(null);
   const [flowStats, setFlowStats] = useState<{ lines: number; sinks: number } | null>(null);
   const [flowHint, setFlowHint] = useState<string | null>(null);
 
@@ -219,14 +225,13 @@ export default function App() {
     }
     // a rebuilt map (hot reload) is not ready until its own style has loaded
     setReady(false);
+    setBasemapVisible(false);
+    setBasemapDelayed(false);
 
     const map = new MLMap({
       container: containerRef.current,
       style: buildStyle(),
-      center: openingView.center,
-      zoom: openingView.zoom,
-      pitch: openingView.pitch,
-      bearing: openingView.bearing,
+      ...firstView,
       minZoom: 10.5,
       maxZoom: 19.5,
       maxPitch: 78,
@@ -240,6 +245,35 @@ export default function App() {
     });
     mapRef.current = map;
     if (import.meta.env.DEV) (window as unknown as { __map: MLMap }).__map = map;
+
+    let basemapTimer = 0;
+    let lastBasemapCheck = 0;
+    const checkBasemap = () => {
+      const now = performance.now();
+      if (now - lastBasemapCheck < 200 || !map.getLayer('water')) return;
+      lastBasemapCheck = now;
+      const features = map.queryRenderedFeatures({ layers: ['water', 'landuse-residential', 'roads-minor', 'roads-major'] });
+      if (features.length) {
+        setBasemapVisible(true);
+        setBasemapDelayed(false);
+        window.clearTimeout(basemapTimer);
+        map.off('render', checkBasemap);
+      }
+    };
+    const watchBasemap = () => {
+      window.clearTimeout(basemapTimer);
+      map.off('render', checkBasemap);
+      map.on('render', checkBasemap);
+      basemapTimer = window.setTimeout(() => setBasemapDelayed(true), 6500);
+    };
+    watchBasemap();
+    map.on('webglcontextlost', () => {
+      setBasemapVisible(false);
+      setBasemapDelayed(true);
+      stopOrbitRef.current?.();
+      stopOrbitRef.current = null;
+    });
+    map.on('webglcontextrestored', watchBasemap);
 
     map.addControl(
       new AttributionControl({
@@ -270,7 +304,18 @@ export default function App() {
       console.warn('[map]', e.error?.message ?? e);
     });
 
+    let runoffLayer: SurfaceWaterLayer | undefined;
+    let studyMarker: Marker | undefined;
+    let stopRiverCurrents: (() => void) | undefined;
+    let live = true;
+    const mountSurfaceWater = () => {
+      if (!runoffLayer || map.getLayer(runoffLayer.id)) return;
+      map.addLayer(runoffLayer, 'buildings-3d');
+    };
+    map.on('webglcontextrestored', () => map.once('style.load', mountSurfaceWater));
+
     map.on('load', () => {
+      stopRiverCurrents = installRiverCurrents(map);
       // selection highlight
       map.addSource('selected', { type: 'geojson', data: EMPTY_FC });
       map.addLayer(
@@ -363,7 +408,6 @@ export default function App() {
           features: [
             { type: 'Feature', properties: { kind: 'street' }, geometry: { type: 'LineString', coordinates: THERWILERSTRASSE } },
             { type: 'Feature', properties: { kind: 'street' }, geometry: { type: 'LineString', coordinates: PAULUSGASSE } },
-            { type: 'Feature', properties: { kind: 'point' }, geometry: { type: 'Point', coordinates: STUDY_CENTER } },
           ],
         },
       });
@@ -401,26 +445,6 @@ export default function App() {
         },
         'buildings-3d',
       );
-      map.addLayer(
-        {
-          id: 'study-point',
-          type: 'circle',
-          source: 'study',
-          filter: ['==', ['get', 'kind'], 'point'],
-          paint: {
-            'circle-pitch-alignment': 'map',
-            'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 7, 13, 12, 15, 26],
-            'circle-color': 'rgba(69, 220, 240, 0.12)',
-            'circle-stroke-color': '#45dcf0',
-            'circle-stroke-width': 1.4,
-            'circle-opacity': 0,
-            'circle-stroke-opacity': 0,
-            'circle-opacity-transition': fade,
-            'circle-stroke-opacity-transition': fade,
-          },
-        },
-        'street-labels',
-      );
       const tag = (cls: string, html: string) => {
         const el = document.createElement('div');
         el.className = 'map-tag-anchor';
@@ -433,18 +457,28 @@ export default function App() {
       baselTagRef.current = new Marker({ element: tag('map-tag--city', '<b>Basel</b><span>Switzerland</span>'), anchor: 'bottom', offset: [0, -26] })
         .setLngLat(BASEL_LABEL_AT)
         .addTo(map);
-      studyTagRef.current = new Marker({ element: tag('map-tag--study', '<i></i><span>Study area · Therwilerstrasse</span>'), anchor: 'left', offset: [16, 0] })
-        .setLngLat(STUDY_CENTER)
-        .addTo(map);
+      const studyAnchor = document.createElement('div');
+      studyAnchor.className = 'map-tag-anchor';
+      studyAnchor.setAttribute('aria-label', 'Therwilerstrasse study area');
+      studyMarker = new Marker({ element: studyAnchor }).setLngLat(STUDY_CENTER).addTo(map);
+      setStudyMarkerAnchor(studyAnchor);
 
       // start with the attribution collapsed to the (i) button so it never covers the toolbar
       containerRef.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
       flowRef.current = new FlowLayer(map);
       drainRef.current = new DrainageLayer(map);
+      void import('./map/surfaceWater').then(({ SurfaceWaterLayer }) => {
+        if (!live) return;
+        runoffLayer = new SurfaceWaterLayer();
+        if (map.getLayer('buildings-3d')) mountSurfaceWater();
+        setSurfaceWater(runoffLayer);
+      }).catch(() => {
+        if (live) flash('The surface runoff layer could not be loaded.');
+      });
       setReady(true);
       // front-page opening: drift from a distant, low view into the Basel overview, then turn slowly
-      if (prefersReducedMotion()) {
-        map.jumpTo({ ...cityView, padding: journeyPadding('city') });
+      if (startFreely || prefersReducedMotion()) {
+        map.jumpTo({ ...cityView, padding: journeyPadding(startFreely ? null : 'city') });
       } else {
         const token = tokenRef.current;
         map.easeTo({ ...cityView, padding: journeyPadding('city'), duration: 3600, easing: settle });
@@ -485,6 +519,7 @@ export default function App() {
     });
 
     return () => {
+      live = false;
       cancelAnimationFrame(rafCam);
       cancelAnimationFrame(hoverRaf);
       flightRef.current?.cancel();
@@ -492,10 +527,13 @@ export default function App() {
       flowRef.current?.destroy();
       drainRef.current?.destroy();
       osmAbortRef.current?.abort();
+      stopRiverCurrents?.();
+      studyMarker?.remove();
+      window.clearTimeout(basemapTimer);
       map.remove();
       mapRef.current = null;
     };
-  }, [flash]);
+  }, [firstView, flash, startFreely]);
 
   /* ------------------------------------------------------------------ selection */
   const clearSelection = useCallback(() => {
@@ -894,15 +932,14 @@ export default function App() {
     const map = mapRef.current;
     if (!map || !ready || !map.getLayer('study-line')) return;
     const s = guided ? jStage : null;
-    const point = s === 'city' ? 1 : 0;
-    const line = s === 'neighbourhood' ? 1 : s === 'street' ? 0.32 : s === 'water' || s === 'below' ? 0.14 : 0;
-    map.setPaintProperty('study-point', 'circle-opacity', point);
-    map.setPaintProperty('study-point', 'circle-stroke-opacity', point * 0.9);
+    const line = rain ? 0 : s === 'neighbourhood' ? 1 : s === 'street' ? 0.32 : s === 'water' || s === 'below' ? 0.14 : 0;
+    for (const id of ['city-river-tint', 'city-rhine-glow', 'city-rhine-centre']) {
+      map.setLayoutProperty(id, 'visibility', s === 'city' ? 'visible' : 'none');
+    }
     map.setPaintProperty('study-line', 'line-opacity', line * 0.9);
     map.setPaintProperty('study-glow', 'line-opacity', line * 0.4);
     baselTagRef.current?.getElement().firstElementChild?.classList.toggle('is-on', s === 'city');
-    studyTagRef.current?.getElement().firstElementChild?.classList.toggle('is-on', s === 'city' || s === 'neighbourhood');
-  }, [guided, jStage, ready]);
+  }, [guided, jStage, rain, ready]);
 
   const adjustCamera = (adjust: (map: MLMap) => { zoom?: number; bearing?: number; pitch?: number }, duration: number) => {
     const map = mapRef.current;
@@ -914,6 +951,10 @@ export default function App() {
   const rotateBy = (d: number) => adjustCamera((map) => ({ bearing: map.getBearing() + d }), 800);
   const north = () => adjustCamera(() => ({ bearing: 0 }), 900);
   const tilt = () => adjustCamera((map) => ({ pitch: map.getPitch() > 20 ? 0 : 60 }), 1000);
+
+  useEffect(() => {
+    if (ready) surfaceWater?.setWeather(rain, rainIntensity, flows);
+  }, [ready, surfaceWater, rain, rainIntensity, flows]);
 
   /* ------------------------------------------------------------------ rain: wet-street look */
   useEffect(() => {
@@ -941,6 +982,11 @@ export default function App() {
       'atmosphere-blend': 0.5,
     });
   }, [rain, ready]);
+
+  const atRunoffSite = cam.zoom >= 15.5 && distanceM([cam.lng, cam.lat], STUDY_CENTER) < 430;
+  useEffect(() => {
+    if (ready) flowRef.current?.setAmbientDrops(!atRunoffSite);
+  }, [ready, atRunoffSite]);
 
   /* ------------------------------------------------------------------ water flows */
   useEffect(() => {
@@ -1222,18 +1268,12 @@ export default function App() {
       setPhase('free');
       setFlying(false);
     }
-    const layer = new UndergroundLayer({ labels: ugLabelsRef.current });
-    layer.hideBlock = true;
-    layer.flowSvg = ugFlowSvgRef.current;
-    ugLayerRef.current = layer;
-    map.addLayer(layer);
-    map.setMaxZoom(20.6);
     const prev = { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() };
     const bOpacity = map.getPaintProperty('buildings-3d', 'fill-extrusion-opacity');
     map.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', 0.18);
     const reduced = prefersReducedMotion();
     map.flyTo({
-      center: layer.lookAt(),
+      center: STUDY_CENTER,
       zoom: 19.45,
       pitch: 56,
       // three-quarter view onto the cut face at the south end of the block
@@ -1244,9 +1284,6 @@ export default function App() {
     });
     if (location.hash !== '#underground') history.replaceState(null, '', '#underground');
     return () => {
-      ugLayerRef.current = null;
-      if (map.getLayer(layer.id)) map.removeLayer(layer.id);
-      map.setMaxZoom(19.5);
       map.setPaintProperty('buildings-3d', 'fill-extrusion-opacity', bOpacity);
       map.easeTo({ ...prev, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: reduced ? 0 : 1600 });
       if (location.hash === '#underground') history.replaceState(null, '', location.pathname + location.search);
@@ -1255,40 +1292,12 @@ export default function App() {
   }, [underground, ready]);
 
   useEffect(() => {
-    const l = ugLayerRef.current;
-    if (!l) return;
-    l.focus = ugFocus;
-    l.explodeTarget = ugApart ? 1 : 0;
-    l.water = ugWater;
-    l.view = ugView;
-  }, [ugFocus, ugApart, ugWater, ugView, underground, ready]);
-
-  // water-flows view looks more squarely at the cut face, where the paths are drawn
-  const ugViewMounted = useRef(false);
-  useEffect(() => {
-    const map = mapRef.current;
-    const l = ugLayerRef.current;
-    if (!ugViewMounted.current) {
-      ugViewMounted.current = true;
-      return;
-    }
-    if (!map || !l || !underground) return;
-    const flows = ugView === 'flows';
-    // drops are a cloud over the block; the drawn paths carry the story in this view
-    setUgWater(!flows);
-    map.easeTo({
-      center: flows ? l.lookAtFace() : l.lookAt(),
-      zoom: flows ? 20.2 : 19.45,
-      // look almost horizontally at the vertical cut face
-      pitch: flows ? 76 : 56,
-      bearing: STREET_BEARING - (flows ? 2 : 10),
-      duration: prefersReducedMotion() ? 0 : 1300,
-      easing: smoothOut,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ugView]);
+    if (surface) void loadStreetScene().catch(() => {});
+  }, [surface]);
 
   const openUnderground = () => {
+    setUgWater(rain);
+    setUgApart(false);
     setUgFocus(null);
     setUgFlowStep(null);
     setUnderground(true);
@@ -1313,7 +1322,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [underground, surface, selection, climateOpen, clearSelection, closeSurface, flying, pauseCamera]);
 
-  const showIntro = guided && jStage === 'city';
+  const showCityOverview = guided && jStage === 'city';
   const nearTarget = distanceM([cam.lng, cam.lat], TARGET.center) < ARRIVAL_RADIUS_M;
   const stage = stageOf(cam.zoom, nearTarget);
   const guidedAtStreet = guided && unlocked && stage === 'street' && (jStage === 'street' || jStage === 'water');
@@ -1322,14 +1331,27 @@ export default function App() {
     <div
       className={`app phase-${phase} ${rain ? 'is-raining' : ''} ${flows ? 'is-flowing' : ''} ${surface ? 'has-surface' : ''} ${underground ? 'is-underground' : ''} ${guided ? `is-guided j-${jStage}` : 'is-exploring'}`}
     >
+      {(!showCityOverview || flying || fatal) && <h1 className="sr-only">Basel Beneath the Surface Map</h1>}
       <div ref={containerRef} className="map" />
+      {studyMarkerAnchor && basemapVisible && guided && (jStage === 'city' || jStage === 'neighbourhood') && !underground &&
+        createPortal(<TherwilerstrasseMarker />, studyMarkerAnchor)}
+      {!basemapVisible && !fatal && (
+        <>
+          <img className="map-preview" src={`${import.meta.env.BASE_URL}images/basel-entry.webp`} alt="Basel basemap preview" />
+          <div className="glass map-preview__status" role="status">
+            <p>{basemapDelayed ? 'Live map tiles are taking longer to load.' : 'Loading the live Basel map…'}</p>
+            {basemapDelayed && <button type="button" onClick={() => location.reload()}>Retry live map</button>}
+          </div>
+        </>
+      )}
       <div className="vignette" aria-hidden="true" />
-      <RainOverlay active={rain} bearing={cam.bearing} intensity={rainIntensity} />
+      <RainOverlay active={rain && !underground} intensity={rainIntensity} />
 
       {fatal && (
         <div className="fatal">
           <h1>Map unavailable</h1>
           <p>{fatal}</p>
+          <button type="button" onClick={() => location.reload()}>Retry live map</button>
         </div>
       )}
 
@@ -1372,9 +1394,9 @@ export default function App() {
             {cam.lat.toFixed(4)}° N · {cam.lng.toFixed(4)}° E · z{cam.zoom.toFixed(1)} · {Math.round(cam.pitch)}°
           </span>
         </div>
-        {showIntro && (
+        {showCityOverview && (
           <div className="hud__live">
-            <p className="eyebrow">Live view</p>
+            <p className="eyebrow"><span className="hud__live-dot" /> Live view</p>
             <dl className="hud__metrics">
               <div><dt>Zoom</dt><dd>{cam.zoom.toFixed(1)}</dd></div>
               <div><dt>Pitch</dt><dd>{Math.round(cam.pitch)}°</dd></div>
@@ -1385,24 +1407,19 @@ export default function App() {
         )}
       </aside>
 
-      {/* Intro */}
-      <section className={`intro ${showIntro ? '' : 'is-leaving'}`} aria-hidden={!showIntro} inert={!showIntro}>
-        <div className="intro__inner">
-          <p className="eyebrow">
-            <span className="jcard__step">1 / 5</span> Basel, Switzerland
-          </p>
-          <h1>
-            How Does a <em>Sponge-City Street</em> Work?
-          </h1>
-          <p className="intro__sub">Travel from Basel to Therwilerstrasse and discover what happens to rainwater above and beneath the street.</p>
-          <div className="intro__actions">
-            <button className="cta" onClick={() => goStage('street')} disabled={!ready}>
-              <span>{ready ? 'Explore Basel' : 'Loading Basel…'}</span>
-              <svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            </button>
-          </div>
-        </div>
-      </section>
+      {!fatal && showCityOverview && !flying && !underground && (
+        <>
+          <CityOverview ready={ready} reached={reached} onExplore={exploreFreely} onGo={goStage} />
+          <CityMapActions
+            ready={ready}
+            rain={rain}
+            intensity={rainIntensity}
+            onIntensity={setRainIntensity}
+            onRain={() => setRain((r) => !r)}
+            onFly={() => goStage('street')}
+          />
+        </>
+      )}
 
       <FlightCaption show={guided && flying && stageIndex(jStage) <= 2} stage={stage} />
 
@@ -1418,19 +1435,22 @@ export default function App() {
             heroKind={heroKind}
             pathsReady={heroKind !== null}
             onNext={() => goStage(jStage === 'neighbourhood' ? 'street' : 'water')}
+            onRain={() => setRain(true)}
             onFollow={followWater}
             onBelow={() => goStage('below')}
             onRecenter={() => goStage(jStage)}
           />
-          <JourneyNav
-            stage={jStage}
-            reached={reached}
-            flying={flying}
-            onGo={goStage}
-            onPause={pauseCamera}
-            onBasel={() => goStage('city')}
-            onExplore={exploreFreely}
-          />
+          {(!showCityOverview || flying) && (
+            <JourneyNav
+              stage={jStage}
+              reached={reached}
+              flying={flying}
+              onGo={goStage}
+              onPause={pauseCamera}
+              onBasel={() => goStage('city')}
+              onExplore={exploreFreely}
+            />
+          )}
         </>
       )}
 
@@ -1472,8 +1492,7 @@ export default function App() {
 
       {!fatal && (
         <EnvToolbar
-          visible={!surface && !flying && (showIntro || guidedAtStreet || !guided)}
-          opening={showIntro}
+          visible={!surface && !flying && (guidedAtStreet || !guided)}
           ready={ready}
           unlocked={guided ? guidedAtStreet : true}
           rain={rain}
@@ -1483,6 +1502,7 @@ export default function App() {
           surface={surface}
           flowStats={flowStats}
           flowHint={flowHint}
+          atRunoffSite={atRunoffSite}
           onRain={() => setRain((r) => !r)}
           onFlows={() => setFlows((f) => !f)}
           onSurface={() => setSurface((s) => !s)}
@@ -1492,18 +1512,24 @@ export default function App() {
 
       <InfoPanel sel={selection} onClose={clearSelection} />
       <SectionConnector active={guided && jStage === 'below' && surface} project={projectHero} />
-      {underground && ugView === 'map' && (
+      {underground && (
         <UndergroundBlock
+          showFlows={ugView === 'flows'}
+          flowStep={ugFlowStep}
+          flowSvgRef={ugFlowSvgRef}
           apart={ugApart}
           onApart={setUgApart}
           raining={ugWater}
+          rainIntensity={rainIntensity}
           onRain={() => setUgWater((w) => !w)}
           focus={ugFocus}
-          onFocus={setUgFocus}
+          onFocus={(focus) => {
+            setUgFocus(focus);
+            if (ugView === 'flows') setUgFlowStep(null);
+          }}
         />
       )}
       <UndergroundView
-        ref={ugLabelsRef}
         open={underground}
         view={ugView}
         onView={(v) => {

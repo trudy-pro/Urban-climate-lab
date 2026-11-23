@@ -309,27 +309,6 @@
 .beneath.is-revealing .beneath__footnote,
 .beneath.is-revealing .beneath__inspector { opacity: 0; pointer-events: none; }
 .beneath.is-revealing .beneath__controls { transform: translateY(10px); }
-.beneath__verse {
-  position: absolute; z-index: 15; left: 50%; bottom: max(1.6rem, var(--safe-b));
-  transform: translateX(-50%); width: min(40rem, calc(100% - 2 * var(--margin)));
-  display: grid; justify-items: center; gap: 0.7rem; text-align: center; pointer-events: none;
-}
-.beneath__verse p {
-  margin: 0; font-family: var(--text); font-style: italic; font-size: clamp(1rem, 1.5vw, 1.28rem);
-  line-height: 1.45; color: var(--charcoal); text-shadow: 0 2px 18px rgba(0, 0, 0, 0.7); animation: beneath-verse 2.2s ease both;
-}
-.beneath__verse button {
-  pointer-events: auto; padding: 0.3rem 0.7rem; border-radius: 999px; font-size: 0.74rem;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--secondary); border: 1px solid var(--rule);
-}
-.beneath__verse button:hover { background: rgba(255, 255, 255, 0.06); color: var(--charcoal); }
-@keyframes beneath-verse {
-  0% { opacity: 0; transform: translateY(6px); filter: blur(3px); }
-  22% { opacity: 1; transform: none; filter: none; }
-  86% { opacity: 1; }
-  100% { opacity: 0.25; }
-}
-
 /* ---- arriving from the map: the cutaway rises out of the street; leaving: it sinks back */
 .beneath { animation: beneath-arrive 1.3s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .beneath__stage { animation: beneath-rise 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) both 0.1s; }

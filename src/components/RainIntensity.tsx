@@ -1,4 +1,4 @@
-const LEVELS = ['Gentle', 'Moderate', 'Heavy'] as const;
+const LEVELS = ['Light', 'Heavy', 'Extreme'] as const;
 export type RainLevel = 0 | 1 | 2;
 
 export function RainIntensity({ intensity, onIntensity }: {
@@ -6,12 +6,18 @@ export function RainIntensity({ intensity, onIntensity }: {
   onIntensity: (level: RainLevel) => void;
 }) {
   return (
-    <div className="segmented small rain-intensity" role="radiogroup" aria-label="Rainfall intensity (visual only)" title="Changes the animation only; not a rainfall or flood prediction">
-      {LEVELS.map((label, index) => (
-        <button key={label} role="radio" aria-checked={intensity === index} className={intensity === index ? 'on' : ''} onClick={() => onIntensity(index as RainLevel)}>
-          {label}
-        </button>
-      ))}
-    </div>
+    <label className="rain-intensity">
+      <span>Rainfall</span>
+      <input
+        type="range"
+        min={0}
+        max={2}
+        step={1}
+        value={intensity}
+        aria-valuetext={LEVELS[intensity]}
+        onChange={(event) => onIntensity(event.currentTarget.valueAsNumber as RainLevel)}
+      />
+      <span className="rain-intensity__level" aria-hidden="true">{LEVELS[intensity]}</span>
+    </label>
   );
 }

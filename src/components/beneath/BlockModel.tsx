@@ -1,13 +1,14 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import {
-  BufferAttribute, BufferGeometry, CanvasTexture, Color, DoubleSide, DynamicDrawUsage, MeshStandardMaterial,
-  NearestFilter, Points, RepeatWrapping, SRGBColorSpace,
+  AdditiveBlending, BufferAttribute, BufferGeometry, CanvasTexture, Color, DoubleSide, DynamicDrawUsage, MeshStandardMaterial,
+  LineSegments, NearestFilter, Points, RepeatWrapping, SRGBColorSpace,
 } from 'three';
 import {
   FOUNDATION_BOTTOM, INLET_X, PAVERS, PLANTED, ROOTZONE, SEWER, SIDEWALK, STREET, SUBSTRATE,
   substrateBottom, substrateTop, surfaceY,
 } from '../section/geometry';
+import type { RainLevel } from '../RainIntensity';
 import { LENGTH, WIDTH, type ModelState, type SlabKey } from './data';
 
 /**
@@ -226,6 +227,68 @@ export function BlockBody({ layer }: { layer: SlabKey }) {
   );
 }
 
+const STREAK_COUNTS = [72, 140, 220];
+const RAIN_HEIGHT = 9;
+const TAIL = new Color('#214a70');
+const HEAD = new Color('#92caff');
+
+/** Rain falls in 3D above the street and stops where it meets the surface slab. */
+export function StreetRain({ model, intensity, reduced }: { model: ModelState; intensity: RainLevel; reduced: boolean }) {
+  const ref = useRef<LineSegments>(null);
+  const { invalidate } = useThree();
+  const rain = useMemo(() => {
+    const count = STREAK_COUNTS[2];
+    const colors = new Float32Array(count * 6);
+    const streaks = Array.from({ length: count }, (_, i) => {
+      TAIL.toArray(colors, i * 6);
+      HEAD.toArray(colors, i * 6 + 3);
+      const x = X0 + Math.random() * (X1 - X0);
+      return {
+        x: sx(x),
+        z: Z0 + Math.random() * LENGTH,
+        ground: sy(surfaceY(x)),
+        height: Math.random() * RAIN_HEIGHT,
+        speed: 10 + Math.random() * 9,
+        length: 0.24 + Math.random() * 0.58,
+      };
+    });
+    return { streaks, colors, positions: new Float32Array(count * 6) };
+  }, []);
+
+  useFrame((_, delta) => {
+    const geometry = ref.current!.geometry;
+    const count = STREAK_COUNTS[intensity];
+    const dt = reduced ? 0 : Math.min(delta, 0.05);
+    for (let i = 0; i < count; i++) {
+      const streak = rain.streaks[i];
+      streak.height -= streak.speed * dt;
+      if (streak.height < 0) streak.height += RAIN_HEIGHT;
+      const ground = streak.ground + model.offset.surface;
+      const endHeight = Math.min(RAIN_HEIGHT, streak.height + streak.length);
+      const index = i * 6;
+      rain.positions[index] = streak.x - endHeight * 0.11;
+      rain.positions[index + 1] = ground + endHeight;
+      rain.positions[index + 2] = streak.z;
+      rain.positions[index + 3] = streak.x - streak.height * 0.11;
+      rain.positions[index + 4] = ground + streak.height;
+      rain.positions[index + 5] = streak.z;
+    }
+    geometry.setDrawRange(0, count * 2);
+    geometry.getAttribute('position').needsUpdate = true;
+    if (!reduced) invalidate();
+  });
+
+  return (
+    <lineSegments ref={ref} frustumCulled={false} raycast={() => null}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[rain.positions, 3]} usage={DynamicDrawUsage} />
+        <bufferAttribute attach="attributes-color" args={[rain.colors, 3]} />
+      </bufferGeometry>
+      <lineBasicMaterial vertexColors transparent opacity={0.78} blending={AdditiveBlending} depthWrite={false} toneMapped={false} />
+    </lineSegments>
+  );
+}
+
 /* ------------------------------------------------------------------ water: drops through the block (conceptual) */
 interface Drop {
   x: number;
@@ -235,7 +298,7 @@ interface Drop {
   stopY: number;
 }
 
-function layerAt(x: number, y: number): SlabKey {
+export function layerAt(x: number, y: number): SlabKey {
   if (x >= PLANTED.x0 && x <= PLANTED.x1 && y < surfaceY(x) + 22) return 'surface';
   if (x >= SUBSTRATE.x0 && x <= SUBSTRATE.x1 && y >= substrateTop(x) && y <= substrateBottom(x)) return 'substrate';
   if (x >= PAVERS.x0 && y < 194) return 'surface';
