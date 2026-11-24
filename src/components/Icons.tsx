@@ -22,8 +22,8 @@ export const Icon = {
   target: () => (
     <svg viewBox="0 0 24 24" width="18" height="18"><path {...P} d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z" /><circle {...P} cx="12" cy="9.5" r="2.5" /></svg>
   ),
-  rain: () => (
-    <svg viewBox="0 0 24 24" width="18" height="18"><path {...P} d="M7 15a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 7a4 4 0 0 1-.5 8M8 18l-1 3M12 17l-1 4M16 18l-1 3" /></svg>
+  drop: () => (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path {...P} d="M12 3.5c3.6 4.4 6 7.6 6 10.6a6 6 0 0 1-12 0c0-3 2.4-6.2 6-10.6Z" /></svg>
   ),
   flow: () => (
     <svg viewBox="0 0 24 24" width="18" height="18"><path {...P} d="M3 7c3 0 3 2 6 2s3-2 6-2 3 2 6 2M3 12c3 0 3 2 6 2s3-2 6-2 3 2 6 2M3 17c3 0 3 2 6 2s3-2 6-2" /></svg>

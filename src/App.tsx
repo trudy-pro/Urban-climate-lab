@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useTheme } from './theme';
+import { ThemeToggle } from './components/ThemeToggle';
+import { CityOverview, CityMapActions } from './components/paper/CityOverview';
+import { TherwilerstrasseMarker } from './components/paper/TherwilerstrasseMarker';
 import {
   AttributionControl,
   Map as MLMap,
@@ -7,6 +12,8 @@ import {
   type GeoJSONSource,
   type MapGeoJSONFeature,
   type MapMouseEvent,
+  type MapMovementEvent,
+  type MapSourceDataEvent,
   type PaddingOptions,
 } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -39,11 +46,16 @@ import {
   type JourneyStage,
 } from './journey';
 import { FlightCaption, JourneyCard, JourneyNav, MapStages, SectionConnector } from './components/Journey';
-import { BUILDING_EXTRUSION_COLOR, COLORS, STREET_COLORS, buildStyle, streetPaint } from './map/style';
+import { BUILDING_EXTRUSION_COLOR, COLORS, STREET_COLORS, streetPaint } from './map/style';
+import { BUILDING_EXTRUSION_COLOR as paperBuildingColor, COLORS as PAPER_COLORS, STREET_COLORS as PAPER_STREETS } from './map/paperStyle';
+import { buildThemedStyle, installMapTheme } from './map/themeStyle';
+import { installIllustrationPatterns } from './map/illustration';
+import { installRiverCurrents } from './map/riverCurrents';
 import { cubicBezier, idleOrbit, type FlightHandle } from './map/cinematic';
 import { areaM2, centroid, distanceM, inflate, type LngLatTuple } from './map/geo';
 import { pickFootprint } from './map/pick';
 import { FlowLayer } from './map/flows';
+import { SurfaceWaterLayer } from './map/surfaceWater';
 import { DrainageLayer } from './map/drainage';
 import { fetchOsmBuilding } from './data/osm';
 import { fetchGwrBuilding } from './data/gwr';
@@ -54,9 +66,10 @@ import { CameraControls } from './components/CameraControls';
 import { EnvToolbar } from './components/EnvToolbar';
 import type { RainLevel } from './components/RainIntensity';
 import { ClimatePanel } from './components/ClimatePanel';
-import { RainOverlay } from './components/RainOverlay';
 import { SurfaceSection } from './components/SurfaceSection';
 import { UndergroundView } from './components/UndergroundView';
+import { useAmbience } from './components/useAmbience';
+import { JOURNEY } from './journey';
 
 setWorkerUrl(workerUrl);
 
@@ -117,6 +130,7 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
   const flowRef = useRef<FlowLayer | null>(null);
+  const waterRef = useRef<SurfaceWaterLayer | null>(null);
   const drainRef = useRef<DrainageLayer | null>(null);
   const flightRef = useRef<FlightHandle | null>(null);
   const stopOrbitRef = useRef<(() => void) | null>(null);
@@ -163,6 +177,9 @@ export default function App() {
   };
 
   const [ready, setReady] = useState(false);
+  const theme = useTheme();
+  const paper = theme === 'light';
+  const [basemapVisible, setBasemapVisible] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [phase, setPhaseState] = useState<Phase>('intro');
@@ -172,7 +189,10 @@ export default function App() {
 
   const [rain, setRain] = useState(false);
   const [rainIntensity, setRainIntensity] = useState<RainLevel>(1);
+  const [sound, setSound] = useState(false);
+  useAmbience(sound);
   const [flows, setFlows] = useState(false);
+  const toggleFlows = () => setFlows((active) => !active);
   const [surface, setSurface] = useState(false);
   const [underground, setUnderground] = useState(() => typeof location !== 'undefined' && location.hash === '#underground');
   const [flowStats, setFlowStats] = useState<{ lines: number; sinks: number } | null>(null);
@@ -181,7 +201,7 @@ export default function App() {
   const [climateOpen, setClimateOpen] = useState(false);
   const [climateId, setClimateId] = useState<string | null>(null);
   const [climateYear, setClimateYear] = useState<'today' | '2030'>('today');
-  const [climateOpacity, setClimateOpacity] = useState(0.62);
+  const [climateOpacity, setClimateOpacity] = useState(CLIMATE_LAYERS[0].opacity);
   const [climateLoading, setClimateLoading] = useState(false);
   const [treesOn, setTreesOn] = useState(false);
   const [fellingOn, setFellingOn] = useState(false);
@@ -210,10 +230,11 @@ export default function App() {
     }
     // a rebuilt map (hot reload) is not ready until its own style has loaded
     setReady(false);
+    setBasemapVisible(false);
 
     const map = new MLMap({
       container: containerRef.current,
-      style: buildStyle(),
+      style: buildThemedStyle(),
       center: openingView.center,
       zoom: openingView.zoom,
       pitch: openingView.pitch,
@@ -230,6 +251,19 @@ export default function App() {
       fadeDuration: 250,
     });
     mapRef.current = map;
+    const stopTheme = installMapTheme(map);
+    installIllustrationPatterns(map);
+    let stopRiverCurrents: (() => void) | undefined;
+    let lastBasemapCheck = -Infinity;
+    const checkBasemap = () => {
+      const now = performance.now();
+      if (now - lastBasemapCheck < 200 || !map.getLayer('water')) return;
+      lastBasemapCheck = now;
+      if (!map.queryRenderedFeatures({ layers: ['water', 'landuse-residential', 'roads-minor', 'roads-major'] }).length) return;
+      setBasemapVisible(true);
+      map.off('render', checkBasemap);
+    };
+    map.on('render', checkBasemap);
     if (import.meta.env.DEV) (window as unknown as { __map: MLMap }).__map = map;
 
     map.addControl(
@@ -262,6 +296,7 @@ export default function App() {
     });
 
     map.on('load', () => {
+      stopRiverCurrents = installRiverCurrents(map);
       // selection highlight
       map.addSource('selected', { type: 'geojson', data: EMPTY_FC });
       map.addLayer(
@@ -282,8 +317,8 @@ export default function App() {
           paint: {
             'fill-extrusion-color': '#33507c',
             'fill-extrusion-opacity': 0.95,
-            'fill-extrusion-height': ['+', ['coalesce', ['get', 'h'], 8], 0.25],
-            'fill-extrusion-base': ['coalesce', ['get', 'b'], 0],
+            'fill-extrusion-height': 0.25,
+            'fill-extrusion-base': 0,
           },
         },
         'street-labels',
@@ -296,8 +331,8 @@ export default function App() {
           paint: {
             'fill-extrusion-color': '#7fdcff',
             'fill-extrusion-opacity': 0.9,
-            'fill-extrusion-height': ['+', ['coalesce', ['get', 'h'], 8], 0.4],
-            'fill-extrusion-base': ['coalesce', ['get', 'b'], 0],
+            'fill-extrusion-height': 0.4,
+            'fill-extrusion-base': 0,
           },
         },
         'street-labels',
@@ -424,7 +459,7 @@ export default function App() {
       baselTagRef.current = new Marker({ element: tag('map-tag--city', '<b>Basel</b><span>Switzerland</span>'), anchor: 'bottom', offset: [0, -26] })
         .setLngLat(BASEL_LABEL_AT)
         .addTo(map);
-      studyTagRef.current = new Marker({ element: tag('map-tag--study', '<i></i><span>Study area · Therwilerstrasse</span>'), anchor: 'left', offset: [16, 0] })
+      studyTagRef.current = new Marker({ element: tag('map-tag--study', '<span class="map-tag__ring"><i></i></span><span class="map-tag__lead"></span><span class="map-tag__label"><i></i>Therwilerstrasse</span>'), anchor: 'center' })
         .setLngLat(STUDY_CENTER)
         .addTo(map);
 
@@ -432,6 +467,7 @@ export default function App() {
       containerRef.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
       flowRef.current = new FlowLayer(map);
       drainRef.current = new DrainageLayer(map);
+      waterRef.current = new SurfaceWaterLayer(map);
       setReady(true);
       // front-page opening: drift from a distant, low view into the Basel overview, then turn slowly
       if (prefersReducedMotion()) {
@@ -476,6 +512,8 @@ export default function App() {
     });
 
     return () => {
+      stopTheme();
+      stopRiverCurrents?.();
       cancelAnimationFrame(rafCam);
       cancelAnimationFrame(hoverRaf);
       flightRef.current?.cancel();
@@ -885,8 +923,12 @@ export default function App() {
     const map = mapRef.current;
     if (!map || !ready || !map.getLayer('study-line')) return;
     const s = guided ? jStage : null;
-    const point = s === 'city' ? 1 : 0;
+    // the home page marks the study area with the ring tag (map-tag--study) instead
+    const point = 0;
     const line = s === 'neighbourhood' ? 1 : s === 'street' ? 0.32 : s === 'water' || s === 'below' ? 0.14 : 0;
+    for (const id of ['city-river-tint', 'city-rhine-glow', 'city-rhine-centre']) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', s === 'city' ? 'visible' : 'none');
+    }
     map.setPaintProperty('study-point', 'circle-opacity', point);
     map.setPaintProperty('study-point', 'circle-stroke-opacity', point * 0.9);
     map.setPaintProperty('study-line', 'line-opacity', line * 0.9);
@@ -911,27 +953,36 @@ export default function App() {
     const map = mapRef.current;
     if (!map || !ready) return;
     const wet = rain;
-    const buildingColors = (palette: typeof COLORS | typeof STREET_COLORS) =>
+    const colors = paper ? PAPER_COLORS : COLORS;
+    const street = paper ? PAPER_STREETS : STREET_COLORS;
+    const buildingColor = paper ? paperBuildingColor : BUILDING_EXTRUSION_COLOR;
+    const buildingColors = (palette: typeof colors | typeof street) =>
       wet
-        ? BUILDING_EXTRUSION_COLOR(palette.buildingWetLow, palette.buildingWetHigh)
-        : BUILDING_EXTRUSION_COLOR(palette.buildingLow, palette.buildingHigh);
-    map.setPaintProperty(
-      'buildings-3d',
-      'fill-extrusion-color',
-      streetPaint(buildingColors(COLORS), buildingColors(STREET_COLORS)),
-    );
-    map.setPaintProperty('roads-minor', 'line-color', wet ? streetPaint('#1b2a40', STREET_COLORS.roadWetMinor) : streetPaint(COLORS.roadMinor, STREET_COLORS.roadMinor));
-    map.setPaintProperty('roads-major', 'line-color', wet ? streetPaint('#223652', STREET_COLORS.roadWetMajor) : streetPaint(COLORS.roadMajor, STREET_COLORS.roadMajor));
+        ? buildingColor(palette.buildingWetLow, palette.buildingWetHigh)
+        : buildingColor(palette.buildingLow, palette.buildingHigh);
+    map.setPaintProperty('buildings-3d', 'fill-extrusion-color', streetPaint(buildingColors(colors), buildingColors(street)));
+    map.setPaintProperty('roads-minor', 'line-color', wet
+      ? streetPaint(paper ? '#e3e8e6' : '#1b2a40', street.roadWetMinor)
+      : streetPaint(colors.roadMinor, street.roadMinor));
+    map.setPaintProperty('roads-major', 'line-color', wet
+      ? streetPaint(paper ? '#e9eeec' : '#223652', street.roadWetMajor)
+      : streetPaint(colors.roadMajor, street.roadMajor));
     map.setSky({
-      'sky-color': '#060a12',
-      'horizon-color': wet ? '#1c2c47' : '#15233b',
-      'fog-color': wet ? '#122038' : '#0a1222',
+      'sky-color': paper ? (wet ? '#dfe3e0' : '#e9eae2') : '#060a12',
+      'horizon-color': paper ? (wet ? '#d3d9d6' : '#dfe1d5') : (wet ? '#1c2c47' : '#15233b'),
+      'fog-color': paper ? (wet ? '#d8dedb' : '#e4e5dd') : (wet ? '#122038' : '#0a1222'),
       'fog-ground-blend': wet ? 0.35 : 0.55,
       'horizon-fog-blend': wet ? 0.9 : 0.7,
       'sky-horizon-blend': 0.6,
       'atmosphere-blend': 0.5,
     });
-  }, [rain, ready]);
+  }, [rain, ready, paper]);
+
+  /* ------------------------------------------------------------------ rain: water spreading over the streets */
+  useEffect(() => {
+    if (!ready) return;
+    waterRef.current?.setRain(rain && !underground, rainIntensity);
+  }, [rain, rainIntensity, ready, underground]);
 
   /* ------------------------------------------------------------------ water flows */
   useEffect(() => {
@@ -956,9 +1007,14 @@ export default function App() {
     });
 
     let timer = 0;
-    const rebuild = () => {
+    let waitingForStreets = false;
+    const rebuild = (event?: MapMovementEvent & { ambientOrbit?: boolean }) => {
+      if (event?.ambientOrbit) return;
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
+        const streetZoom = guided ? 15.5 : 15;
+        waitingForStreets = map.getZoom() >= streetZoom && !map.isSourceLoaded('omt');
+        if (waitingForStreets) return;
         if (guided) {
           // guided: a few paths around the study street + one featured path; keep it stable once followed
           if (followingRef.current || arrivedRef.current) return;
@@ -983,13 +1039,17 @@ export default function App() {
         fl.start();
       }, 220);
     };
-    map.once('idle', rebuild);
-    if (!guided) map.on('moveend', rebuild);
-    else if (flowRef.current?.getHero() && (followingRef.current || arrivedRef.current)) fl.start();
+    const onSourceData = ({ sourceId, isSourceLoaded }: { sourceId: string; isSourceLoaded: boolean }) => {
+      if (waitingForStreets && sourceId === 'omt' && isSourceLoaded) rebuild();
+    };
+    map.on('sourcedata', onSourceData);
+    map.on('moveend', rebuild);
+    rebuild();
+    if (guided && fl.getHero() && (followingRef.current || arrivedRef.current)) fl.start();
     return () => {
       window.clearTimeout(timer);
       map.off('moveend', rebuild);
-      map.off('idle', rebuild);
+      map.off('sourcedata', onSourceData);
     };
   }, [flows, ready, treesVersion, guided, flowNonce]);
 
@@ -1049,8 +1109,16 @@ export default function App() {
     if (map.getLayer('climate')) map.removeLayer('climate');
     if (map.getSource('climate')) map.removeSource('climate');
     const layer = CLIMATE_LAYERS.find((l) => l.id === climateId);
-    if (!layer) return;
+    if (!layer) {
+      setClimateLoading(false);
+      return;
+    }
     const name = climateYear === '2030' && layer.wms2030 ? layer.wms2030 : layer.wms;
+    const onClimateTiles = ({ sourceId, isSourceLoaded }: MapSourceDataEvent) => {
+      if (sourceId === 'climate') setClimateLoading(!isSourceLoaded);
+    };
+    setClimateLoading(true);
+    map.on('sourcedata', onClimateTiles);
     map.addSource('climate', {
       type: 'raster',
       tiles: [wmsTileUrl(name)],
@@ -1067,13 +1135,10 @@ export default function App() {
         source: 'climate',
         paint: { 'raster-opacity': climateOpacity, 'raster-fade-duration': 350, 'raster-saturation': -0.05 },
       },
-      'building-flat',
+      map.getLayer('surface-water') ? 'surface-water' : 'building-flat',
     );
-    setClimateLoading(true);
-    const onIdle = () => setClimateLoading(false);
-    map.once('idle', onIdle);
     return () => {
-      map.off('idle', onIdle);
+      map.off('sourcedata', onClimateTiles);
     };
     // opacity is applied separately so dragging the slider doesn't re-request tiles
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1318,8 +1383,10 @@ export default function App() {
     >
       <div inert={underground} className={`ug-host ${ugDiving ? 'is-diving' : ''} ${underground ? 'is-under' : ''}`}>
       <div ref={containerRef} className="map" />
+      {paper && !basemapVisible && !fatal && <img className="map-preview" src={`${import.meta.env.BASE_URL}images/basel-entry.webp`} alt="Basel basemap preview" />}
       <div className="vignette" aria-hidden="true" />
-      <RainOverlay active={rain && !underground} bearing={cam.bearing} intensity={rainIntensity} />
+      {paper && ready && guided && (jStage === 'city' || jStage === 'neighbourhood') && studyTagRef.current &&
+        createPortal(<TherwilerstrasseMarker />, studyTagRef.current.getElement())}
 
       {fatal && (
         <div className="fatal">
@@ -1357,6 +1424,30 @@ export default function App() {
             <button className="resume__basel" onClick={() => goStage('city')} disabled={!ready}>Back to Basel</button>
           </div>
         )}
+        <div className="topbar__actions">
+          {!fatal && !surface && !underground && (
+            <ClimatePanel
+              open={climateOpen}
+              onToggleOpen={() => setClimateOpen((o) => !o)}
+              activeId={climateId}
+              onSelect={selectClimate}
+              year={climateYear}
+              onYear={setClimateYear}
+              opacity={climateOpacity}
+              onOpacity={setClimateOpacity}
+              trees={treesOn}
+              onTrees={() => setTreesOn((t) => !t)}
+              treeStatus={treeStatus}
+              felling={fellingOn}
+              onFelling={() => setFellingOn((f) => !f)}
+              stations={stationsOn}
+              onStations={() => setStationsOn((s) => !s)}
+              stationStatus={stationStatus}
+              loadingTiles={climateLoading}
+            />
+          )}
+          <ThemeToggle named />
+        </div>
       </header>
 
       {/* Live camera readout */}
@@ -1369,7 +1460,7 @@ export default function App() {
         </div>
         {showIntro && (
           <div className="hud__live">
-            <p className="eyebrow">Live view</p>
+            <p className={paper ? "eyebrow" : "hud__title"}><span className={paper ? "hud__live-dot" : "pulse-dot"} aria-hidden="true" /> Live view</p>
             <dl className="hud__metrics">
               <div><dt>Zoom</dt><dd>{cam.zoom.toFixed(1)}</dd></div>
               <div><dt>Pitch</dt><dd>{Math.round(cam.pitch)}°</dd></div>
@@ -1380,24 +1471,63 @@ export default function App() {
         )}
       </aside>
 
-      {/* Intro */}
-      <section className={`intro ${showIntro ? '' : 'is-leaving'}`} aria-hidden={!showIntro} inert={!showIntro}>
-        <div className="intro__inner">
-          <p className="eyebrow">
-            <span className="jcard__step">1 / 5</span> Basel, Switzerland
-          </p>
+      {/* Intro (home page) */}
+      {!paper && <section className={`intro ${showIntro ? '' : 'is-leaving'}`} aria-hidden={!showIntro} inert={!showIntro}>
+        <div className="intro__card glass">
+          <p className="intro__chip">1 / 5 · Basel, Switzerland</p>
           <h1>
-            How Does a <em>Sponge-City Street</em> Work?
+            How Does a <em>Sponge-City</em> Street Work?
           </h1>
-          <p className="intro__sub">Travel from Basel to Therwilerstrasse and discover what happens to rainwater above and beneath the street.</p>
+          <p className="intro__sub">
+            Travel from Basel to Therwilerstrasse and discover what happens to rainwater above and beneath the street during heavy rain.
+          </p>
           <div className="intro__actions">
-            <button className="cta" onClick={() => goStage('street')} disabled={!ready}>
+            <button className="intro__cta" onClick={() => goStage('street')} disabled={!ready}>
               <span>{ready ? 'Explore Basel' : 'Loading Basel…'}</span>
-              <svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </button>
+            <button
+              className={`intro__sound ${sound ? 'is-on' : ''}`}
+              onClick={() => setSound((v) => !v)}
+              aria-pressed={sound}
+              aria-label={sound ? 'Sound on' : 'Sound off'}
+              title={sound ? 'Sound on' : 'Sound off'}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path d="M4 10v4h4l5 4V6L8 10z" fill="currentColor" />
+                {sound
+                  ? <path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                  : <path d="M16.5 9.5l5 5M21.5 9.5l-5 5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />}
+              </svg>
             </button>
           </div>
+          <button className="intro__free" onClick={exploreFreely} disabled={!ready}>Explore Freely</button>
+          <div className="intro__chapters">
+            <span>Chapter navigation</span>
+            <ol aria-label="Chapters">
+              {JOURNEY.map((j, i) => (
+                <li key={j.key}>
+                  <button
+                    className={i === 0 ? 'is-on' : ''}
+                    aria-current={i === 0 ? 'step' : undefined}
+                    aria-label={`Chapter ${i + 1}: ${j.label}`}
+                    title={j.label}
+                    disabled={!ready || i > Math.max(reached, 2)}
+                    onClick={() => goStage(j.key)}
+                  />
+                </li>
+              ))}
+            </ol>
+          </div>
         </div>
-      </section>
+      </section>}
+      {paper && !fatal && showIntro && !flying && !underground && (
+        <>
+          <CityOverview ready={ready} reached={reached} onExplore={exploreFreely} onGo={goStage} />
+          <CityMapActions ready={ready} rain={rain} intensity={rainIntensity} onIntensity={setRainIntensity}
+            onRain={() => setRain((value) => !value)} flows={flows} onFlows={toggleFlows} onFly={() => goStage('street')} />
+        </>
+      )}
 
       <FlightCaption show={guided && flying && stageIndex(jStage) <= 2} stage={stage} />
 
@@ -1414,14 +1544,14 @@ export default function App() {
             pathsReady={heroKind !== null}
             onNext={() => goStage(jStage === 'neighbourhood' ? 'street' : 'water')}
             onFollow={followWater}
-            onBelow={() => goStage('below')}
+            onBelow={openUnderground}
             onRecenter={() => goStage(jStage)}
           />
           <JourneyNav
             stage={jStage}
             reached={reached}
             flying={flying}
-            onGo={goStage}
+            onGo={(st) => (st === 'below' ? openUnderground() : goStage(st))}
             onPause={pauseCamera}
             onBasel={() => goStage('city')}
             onExplore={exploreFreely}
@@ -1443,31 +1573,9 @@ export default function App() {
         />
       )}
 
-      {!fatal && !guided && (
-        <ClimatePanel
-          open={climateOpen}
-          onToggleOpen={() => setClimateOpen((o) => !o)}
-          activeId={climateId}
-          onSelect={selectClimate}
-          year={climateYear}
-          onYear={setClimateYear}
-          opacity={climateOpacity}
-          onOpacity={setClimateOpacity}
-          trees={treesOn}
-          onTrees={() => setTreesOn((t) => !t)}
-          treeStatus={treeStatus}
-          felling={fellingOn}
-          onFelling={() => setFellingOn((f) => !f)}
-          stations={stationsOn}
-          onStations={() => setStationsOn((s) => !s)}
-          stationStatus={stationStatus}
-          loadingTiles={climateLoading}
-        />
-      )}
-
       {!fatal && (
         <EnvToolbar
-          visible={!surface && !flying && (showIntro || guidedAtStreet || !guided)}
+          visible={!surface && !flying && ((showIntro && !paper) || guidedAtStreet || !guided)}
           opening={showIntro}
           ready={ready}
           unlocked={guided ? guidedAtStreet : true}
@@ -1479,9 +1587,10 @@ export default function App() {
           flowStats={flowStats}
           flowHint={flowHint}
           onRain={() => setRain((r) => !r)}
-          onFlows={() => setFlows((f) => !f)}
+          onFlows={toggleFlows}
           onSurface={() => setSurface((s) => !s)}
           onFlyTarget={guided ? () => goStage('street') : flyTarget}
+          onStart={() => goStage('street')}
         />
       )}
 
@@ -1496,7 +1605,7 @@ export default function App() {
         onIntensity={setRainIntensity}
         onRain={() => setRain((r) => !r)}
         flows={flows}
-        onFlows={() => setFlows((f) => !f)}
+        onFlows={toggleFlows}
         fromStreet={guided && jStage === 'below' ? { kind: heroKind } : null}
       />
 

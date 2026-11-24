@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { CLIMATE_LAYERS, MAPBS_LINK, METEOBLUE_URBANMAPS, wmsLegendJsonUrl, type ClimateLayer } from '../config';
 import { Icon } from './Icons';
 
@@ -41,28 +41,31 @@ function useWmsLegend(layer: string | null) {
         const syms = (j.nodes ?? []).flatMap((n) => n.symbols ?? []).filter((s) => s.title && s.icon);
         const v = syms.length ? syms : null;
         legendCache.set(layer, v);
-        setItems(v);
+        if (!ctl.signal.aborted) setItems(v);
       })
-      .catch(() => setItems(null));
+      .catch(() => {
+        if (!ctl.signal.aborted) setItems(null);
+      });
     return () => ctl.abort();
   }, [layer]);
   return items;
 }
 
 export function ClimatePanel(p: Props) {
+  const panelId = useId();
   const active: ClimateLayer | undefined = CLIMATE_LAYERS.find((l) => l.id === p.activeId);
   const wmsName = active ? (p.year === '2030' && active.wms2030 ? active.wms2030 : active.wms) : null;
   const legend = useWmsLegend(wmsName);
 
   return (
     <div className={`climate ${p.open ? 'is-open' : ''}`}>
-      <button className="glass climate__toggle" onClick={p.onToggleOpen} aria-expanded={p.open}>
+      <button className="glass climate__toggle" onClick={p.onToggleOpen} aria-expanded={p.open} aria-controls={panelId}>
         <Icon.layers />
-        <span>Basel climate data</span>
+        <span className="climate__label">Basel climate data{active && <small>{active.label}</small>}</span>
         {(p.activeId || p.trees || p.felling || p.stations) && <span className="badge">{(p.activeId ? 1 : 0) + (p.trees ? 1 : 0) + (p.felling ? 1 : 0) + (p.stations ? 1 : 0)}</span>}
       </button>
 
-      <div className="glass climate__panel" aria-hidden={!p.open}>
+      <div className="glass climate__panel" id={panelId} aria-hidden={!p.open} inert={!p.open}>
         <p className="eyebrow">Official data · Kanton Basel-Stadt</p>
 
         <button className={`layer-row ${p.trees ? 'on' : ''}`} onClick={p.onTrees} aria-pressed={p.trees}>

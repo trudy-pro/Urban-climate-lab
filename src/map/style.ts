@@ -8,10 +8,11 @@ import { OPENFREEMAP_GLYPHS, OPENFREEMAP_TILEJSON } from '../config';
 export const COLORS = {
   bg: '#060a12',
   land: '#080d17',
-  green: '#0b1a1a',
+  green: '#0a111d',
   greenWet: '#0d2420',
-  water: '#0a1a2c',
-  waterEdge: '#1d4a72',
+  water: '#5a87b9',
+  waterEdge: '#8fadc8',
+  waterShallow: '#6b98c3',
   roadMinor: '#141d2c',
   roadMajor: '#1b2639',
   roadCasing: '#0a0f19',
@@ -68,6 +69,14 @@ export function buildStyle(): StyleSpecification {
         attribution:
           '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> · <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a> · Data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>',
       },
+      dem: {
+        type: 'raster-dem',
+        tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+        encoding: 'terrarium',
+        tileSize: 256,
+        maxzoom: 15,
+        attribution: 'Terrain: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS Terrain Tiles</a>',
+      },
     },
     sky: {
       'sky-color': '#060a12',
@@ -78,7 +87,7 @@ export function buildStyle(): StyleSpecification {
       'sky-horizon-blend': 0.6,
       'atmosphere-blend': 0.5,
     },
-    light: { anchor: 'viewport', color: '#d4e3ff', intensity: 0.32, position: [1.4, 205, 35] },
+    light: { anchor: 'viewport', color: '#d4e3ff', intensity: 0.45, position: [1.3, 215, 45] },
     layers: [
       { id: 'background', type: 'background', paint: { 'background-color': COLORS.land } },
       {
@@ -113,11 +122,38 @@ export function buildStyle(): StyleSpecification {
         paint: { 'fill-color': COLORS.green, 'fill-opacity': 0.7, 'fill-color-transition': { duration: 1200 } },
       },
       {
+        // dark relief shading: hills and valleys shown by light and shadow only, in one navy tone
+        id: 'hillshade',
+        type: 'hillshade',
+        source: 'dem',
+        paint: {
+          'hillshade-exaggeration': 0.75,
+          'hillshade-shadow-color': '#020409',
+          'hillshade-highlight-color': '#1f2d44',
+          'hillshade-accent-color': '#070c16',
+          'hillshade-illumination-direction': 315,
+        },
+      },
+      {
         id: 'water',
         type: 'fill',
         source: 'omt',
         'source-layer': 'water',
-        paint: { 'fill-color': COLORS.water },
+        paint: { 'fill-color': COLORS.water, 'fill-antialias': true },
+      },
+      {
+        // lighter, shallower water along the shores
+        id: 'water-shallow',
+        type: 'line',
+        source: 'omt',
+        'source-layer': 'water',
+        paint: {
+          'line-color': COLORS.waterShallow,
+          'line-width': ['interpolate', ['exponential', 1.6], ['zoom'], 11, 2, 14, 6, 18, 26],
+          'line-offset': ['interpolate', ['exponential', 1.6], ['zoom'], 11, 1, 14, 3, 18, 13],
+          'line-blur': ['interpolate', ['exponential', 1.6], ['zoom'], 11, 2, 14, 5, 18, 20],
+          'line-opacity': 0.85,
+        },
       },
       {
         id: 'water-edge',
@@ -126,9 +162,9 @@ export function buildStyle(): StyleSpecification {
         'source-layer': 'water',
         paint: {
           'line-color': COLORS.waterEdge,
-          'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.6, 16, 1.6],
-          'line-blur': 1.2,
-          'line-opacity': 0.75,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.8, 16, 2],
+          'line-blur': 0.6,
+          'line-opacity': 0.9,
         },
       },
       {
@@ -136,7 +172,11 @@ export function buildStyle(): StyleSpecification {
         type: 'line',
         source: 'omt',
         'source-layer': 'waterway',
-        paint: { 'line-color': COLORS.waterEdge, 'line-opacity': 0.5, 'line-width': 1 },
+        paint: {
+          'line-color': COLORS.water,
+          'line-opacity': 0.95,
+          'line-width': ['interpolate', ['exponential', 1.6], ['zoom'], 11, 1, 14, 2.5, 18, 9],
+        },
       },
       {
         id: 'rail',
@@ -228,25 +268,10 @@ export function buildStyle(): StyleSpecification {
         filter: ['!=', ['get', 'hide_3d'], true],
         paint: {
           'fill-extrusion-color': BUILDING_EXTRUSION_COLOR(COLORS.buildingLow, COLORS.buildingHigh),
-          'fill-extrusion-height': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            13.2,
-            0,
-            15.4,
-            ['coalesce', ['get', 'render_height'], 0],
-          ],
-          'fill-extrusion-base': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            13.2,
-            0,
-            15.4,
-            ['coalesce', ['get', 'render_min_height'], 0],
-          ],
-          'fill-extrusion-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14.2, 0.92],
+          // abstract map: buildings lie flat as footprints instead of 3D boxes
+          'fill-extrusion-height': 0,
+          'fill-extrusion-base': 0,
+          'fill-extrusion-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14.2, 0.62],
           'fill-extrusion-vertical-gradient': true,
         },
       },
@@ -284,7 +309,7 @@ export function buildStyle(): StyleSpecification {
           'text-letter-spacing': 0.25,
           'symbol-placement': placement,
         },
-        paint: { 'text-color': '#3f74a3', 'text-halo-color': COLORS.labelHalo, 'text-halo-width': 1 },
+        paint: { 'text-color': '#eef7ff', 'text-halo-color': '#3f86c8', 'text-halo-width': 1.2 },
       })),
       {
         id: 'place-labels',

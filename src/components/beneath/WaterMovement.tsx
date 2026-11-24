@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import {
-  BufferAttribute, Color, DynamicDrawUsage, Group, InstancedMesh, LineSegments, MathUtils,
-  MeshBasicMaterial, Object3D,
+  BufferAttribute, Color, DoubleSide, DynamicDrawUsage, Group, InstancedMesh, LineSegments, MathUtils,
+  Mesh, MeshBasicMaterial, Object3D, ShaderMaterial, Vector2, Vector3,
 } from 'three';
-import { BUILDINGS, INLETS_Z, PLANT_TOP, SEWER, seededRandom, type ModelState, type SlabKey } from './data';
+import { INLETS_Z, LENGTH, PLANT_TOP, SEWER, seededRandom, type ModelState, type SlabKey } from './data';
 
 type Node = [x: number, y: number, z: number, slab: SlabKey];
 type Flow = { color: string; nodes: Node[]; open: boolean };
@@ -22,9 +22,6 @@ const FLOWS: Flow[] = [
   ]),
 ];
 
-const RAIN_COUNT = 188;
-const RAIN_COLOR = '#559bd0';
-const RAIN_HEIGHT = 12.7;
 const STORAGE = [
   [3.29, -2.72, 6.84, 1.04, 0.25, 0.46], [3.98, -2.8, 6.26, 0.83, 0.16, 0.52],
   [4.49, -2.71, 2.07, 0.86, 0.23, 0.48], [2.83, -2.72, 2.58, 1.12, 0.27, 0.66],
@@ -122,40 +119,225 @@ const highlight = new Color('#b6e3f6');
 const SURFACE_FLOWS = FLOWS.filter(({ open }) => open);
 const BELOW_FLOWS = FLOWS.filter(({ open }) => !open);
 
-function Rain({ model }: { model: ModelState }) {
-  const streaks = useRef<LineSegments>(null);
-  const positions = useMemo(() => new Float32Array(RAIN_COUNT * 6), []);
-  const drops = useMemo(() => {
-    const random = seededRandom(18);
-    return Array.from({ length: RAIN_COUNT }, () => {
-      const x = (random() - 0.5) * 24;
-      const z = (random() - 0.5) * 16;
-      const roof = BUILDINGS.find((b) => Math.abs(b.x - x) < (b.w + 0.18) / 2 && Math.abs(b.z - z) < (b.d + 0.19) / 2);
-      const land = roof ? roof.h + 1.34 * (1 - Math.abs(roof.x - x) / ((roof.w + 0.18) / 2)) : 0.1;
-      return { x, z, land, phase: random(), speed: 8 + random() * 5, length: 0.26 + random() * 0.31 };
-    });
-  }, []);
-  const elapsed = useRef(0);
+/* ---------- simulated surface water (replaces falling rain) ---------- */
 
-  useFrame(({ invalidate }, dt) => {
-    invalidate();
-    elapsed.current += Math.min(dt, 0.05);
-    const buffer = streaks.current!.geometry.getAttribute('position');
-    drops.forEach(({ x, z, land, phase, speed, length }, i) => {
-      const y = RAIN_HEIGHT - ((elapsed.current * speed + phase * (RAIN_HEIGHT - land)) % (RAIN_HEIGHT - land));
-      buffer.setXYZ(i * 2, x, y + model.offset.surface, z);
-      buffer.setXYZ(i * 2 + 1, x + 0.016, y + length + model.offset.surface, z + 0.024);
-    });
-    buffer.needsUpdate = true;
+/** The wet part of the street: from the far kerb across to the planted strip. */
+const SHEET = { x0: -5.9, x1: 2.35, y: 0.071 };
+/** Where the surface water leaves the street: curb inlets and the planted strip. */
+const OUTLETS: [x: number, z: number][] = [
+  ...INLETS_Z.map((z): [number, number] => [0.73, z]),
+  ...[-3.33, 2.1, 6.45].map((z): [number, number] => [2.08, z]),
+];
+
+const sheetVertex = /* glsl */ `
+  varying vec2 vPos;
+  void main() {
+    vPos = (modelMatrix * vec4(position, 1.0)).xz;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const sheetFragment = /* glsl */ `
+  uniform float uTime;
+  uniform float uWet;
+  uniform vec3 uDeep;
+  uniform vec3 uLight;
+  uniform vec2 uRange;
+  uniform vec2 uOutlets[${OUTLETS.length}];
+  varying vec2 vPos;
+
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float noise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+  }
+  float fbm(vec2 p) {
+    float v = 0.0, a = 0.5;
+    for (int k = 0; k < 4; k++) { v += a * noise(p); p = p * 2.03 + 7.1; a *= 0.5; }
+    return v;
+  }
+
+  void main() {
+    vec2 p = vPos; // street x, street z
+    float across = clamp((p.x - uRange.x) / (uRange.y - uRange.x), 0.0, 1.0);
+
+    // water gathers downstream and is pulled toward the nearest outlet
+    float gather = 0.0;
+    vec2 pull = vec2(1.0, 0.0);
+    float best = 1e9;
+    for (int k = 0; k < ${OUTLETS.length}; k++) {
+      vec2 d = uOutlets[k] - p;
+      float dist = length(d);
+      gather += exp(-dist * dist * 0.55);
+      if (dist < best) { best = dist; pull = normalize(d + vec2(0.001, 0.0)); }
+    }
+    gather = clamp(gather, 0.0, 1.0);
+    float depth = smoothstep(0.0, 1.0, across) * 0.55 + gather * 0.75;
+
+    // flowing ripples advected toward the outlet
+    vec2 flow = p - pull * uTime * 0.9;
+    float ripples = fbm(flow * vec2(1.6, 2.4));
+    float streaks = smoothstep(0.52, 0.86, fbm(flow * vec2(3.4, 1.1) + ripples));
+    float sparkle = smoothstep(0.78, 0.96, noise(flow * 7.0 + uTime * 0.6));
+
+    // soft edges where the sheet meets the dry street
+    float edge = smoothstep(0.0, 0.06, across) * (1.0 - smoothstep(0.93, 1.0, across))
+               * (1.0 - smoothstep(7.3, 8.0, abs(p.y)));
+
+    vec3 color = mix(uDeep, uLight, 0.25 + streaks * 0.6 + sparkle * 0.4);
+    float alpha = uWet * edge * (0.18 + depth * 0.36 + streaks * (0.2 + depth * 0.4) + sparkle * 0.25);
+    gl_FragColor = vec4(color, clamp(alpha, 0.0, 0.82));
+  }
+`;
+
+function WaterSheet({ model, reduced, wet }: { model: ModelState; reduced: boolean; wet: { current: number } }) {
+  const mesh = useRef<Mesh>(null);
+  const material = useMemo(() => new ShaderMaterial({
+    vertexShader: sheetVertex,
+    fragmentShader: sheetFragment,
+    transparent: true,
+    depthWrite: false,
+    toneMapped: false,
+    uniforms: {
+      uTime: { value: 0 },
+      uWet: { value: 0 },
+      uDeep: { value: new Color('#1f6fae') },
+      uLight: { value: new Color('#9fd8f3') },
+      uRange: { value: new Vector2(SHEET.x0, SHEET.x1) },
+      uOutlets: { value: OUTLETS.map(([x, z]) => new Vector2(x, z)) },
+    },
+  }), []);
+  useEffect(() => () => material.dispose(), [material]);
+
+  useFrame((_, dt) => {
+    if (!reduced) material.uniforms.uTime.value += Math.min(dt, 0.05);
+    material.uniforms.uWet.value = wet.current;
+    mesh.current!.position.y = SHEET.y + model.offset.surface;
   });
 
   return (
-    <lineSegments ref={streaks} frustumCulled={false} renderOrder={5}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} usage={DynamicDrawUsage} />
-      </bufferGeometry>
-      <lineBasicMaterial color={RAIN_COLOR} transparent opacity={0.52} depthWrite={false} />
-    </lineSegments>
+    <mesh ref={mesh} material={material} rotation={[-Math.PI / 2, 0, 0]}
+      position={[(SHEET.x0 + SHEET.x1) / 2, SHEET.y, 0]} renderOrder={5} frustumCulled={false}>
+      <planeGeometry args={[SHEET.x1 - SHEET.x0, LENGTH, 1, 1]} />
+    </mesh>
+  );
+}
+
+const RIVULETS = 320;
+
+/** Thin streams of water running over the street to the inlets and the planted strip. */
+function Rivulets({ model, reduced, wet }: { model: ModelState; reduced: boolean; wet: { current: number } }) {
+  const dots = useRef<InstancedMesh>(null);
+  const time = useRef(0);
+  const { paths, streams, object, dir, unit } = useMemo(() => {
+    const paths = SURFACE_FLOWS.map(({ nodes }) => {
+      const lengths = [0];
+      for (let k = 1; k < nodes.length; k++) {
+        const a = nodes[k - 1], b = nodes[k];
+        lengths.push(lengths[k - 1] + Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
+      }
+      return { nodes, lengths, total: lengths[lengths.length - 1] };
+    });
+    const random = seededRandom(41);
+    const streams = Array.from({ length: RIVULETS }, (_, i) => ({
+      path: i % paths.length,
+      phase: random(),
+      speed: 0.7 + random() * 0.75,
+      lateral: (random() - 0.5) * 2,
+      wobble: random() * Math.PI * 2,
+      size: 0.75 + random() * 0.6,
+    }));
+    return { paths, streams, object: new Object3D(), dir: new Vector3(), unit: new Vector3(1, 0, 0) };
+  }, []);
+
+  useLayoutEffect(() => {
+    const mesh = dots.current!;
+    const c = new Color();
+    streams.forEach((s, i) => mesh.setColorAt(i, c.set(SURFACE_FLOWS[s.path].color).lerp(highlight, 0.2 + (i % 4) * 0.12)));
+    mesh.instanceColor!.needsUpdate = true;
+  }, [streams]);
+
+  useFrame((_, dt) => {
+    if (!reduced) time.current += Math.min(dt, 0.05);
+    const mesh = dots.current!;
+    const lift = model.offset.surface;
+    streams.forEach((s, i) => {
+      const { nodes, lengths, total } = paths[s.path];
+      const u = (time.current * s.speed / total + s.phase) % 1;
+      const at = u * total;
+      let end = 1;
+      while (lengths[end] < at) end++;
+      const a = nodes[end - 1], b = nodes[end];
+      const t = (at - lengths[end - 1]) / (lengths[end] - lengths[end - 1] || 1);
+      dir.set(b[0] - a[0], 0, b[2] - a[2]).normalize();
+      // the stream starts wide and narrows as water converges on the outlet
+      const spread = (1 - u) * 0.62 + 0.05;
+      const side = s.lateral * spread + Math.sin(time.current * 2.1 + s.wobble) * 0.035;
+      object.position.set(
+        MathUtils.lerp(a[0], b[0], t) - dir.z * side,
+        MathUtils.lerp(a[1], b[1], t) + lift + 0.012,
+        MathUtils.lerp(a[2], b[2], t) + dir.x * side,
+      );
+      object.quaternion.setFromUnitVectors(unit, dir);
+      const fade = Math.min(1, u * 6, (1 - u) * 9) * wet.current * s.size;
+      object.scale.set(fade * (2.6 + s.speed), fade * 0.55, fade);
+      object.updateMatrix();
+      mesh.setMatrixAt(i, object.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={dots} args={[undefined, undefined, RIVULETS]} frustumCulled={false} renderOrder={6}>
+      <sphereGeometry args={[0.06, 8, 6]} />
+      <meshBasicMaterial transparent opacity={0.85} depthWrite={false} toneMapped={false} />
+    </instancedMesh>
+  );
+}
+
+/** Rings where the water drops into each curb inlet or soaks into the planted strip. */
+function OutletRipples({ model, reduced, wet }: { model: ModelState; reduced: boolean; wet: { current: number } }) {
+  const group = useRef<Group>(null);
+  const material = useMemo(() => new MeshBasicMaterial({
+    color: '#b6e3f6', transparent: true, opacity: 0, depthWrite: false, toneMapped: false, side: DoubleSide,
+  }), []);
+  useEffect(() => () => material.dispose(), [material]);
+  const time = useRef(0);
+  useFrame((_, dt) => {
+    if (!reduced) time.current += Math.min(dt, 0.05);
+    const g = group.current!;
+    g.position.y = model.offset.surface;
+    g.children.forEach((ring, i) => {
+      const k = ((time.current * 0.8 + i * 0.37) % 1);
+      ring.scale.setScalar(0.15 + k * 0.85);
+      (ring as Mesh).visible = wet.current > 0.02;
+    });
+    material.opacity = 0.45 * wet.current;
+  });
+  return (
+    <group ref={group}>
+      {OUTLETS.flatMap(([x, z], i) => [0, 1].map((n) => (
+        <mesh key={`${i}-${n}`} material={material} position={[x, SHEET.y + 0.03, z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={6}>
+          <ringGeometry args={[0.32, 0.36, 32]} />
+        </mesh>
+      )))}
+    </group>
+  );
+}
+
+function SurfaceWater({ model, reduced }: { model: ModelState; reduced: boolean }) {
+  const wet = useRef(0);
+  useFrame(({ invalidate }, dt) => {
+    invalidate();
+    wet.current = reduced ? 1 : MathUtils.damp(wet.current, 1, 0.9, Math.min(dt, 0.05));
+  });
+  return (
+    <>
+      <WaterSheet model={model} reduced={reduced} wet={wet} />
+      <Rivulets model={model} reduced={reduced} wet={wet} />
+      <OutletRipples model={model} reduced={reduced} wet={wet} />
+    </>
   );
 }
 
@@ -199,7 +381,7 @@ export function WaterMovement({ model, raining, active, reduced, onSelect }: {
 }) {
   return (
     <>
-      {raining && !reduced && <Rain model={model} />}
+      {raining && <SurfaceWater model={model} reduced={reduced} />}
       {(raining || active) && <>
         <Pathways flows={SURFACE_FLOWS} model={model} raining={raining} reduced={reduced} />
         <Pathways flows={BELOW_FLOWS} model={model} raining={raining} reduced={reduced} />

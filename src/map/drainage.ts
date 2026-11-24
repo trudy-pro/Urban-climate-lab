@@ -51,6 +51,7 @@ export class DrainageLayer {
     const map = this.map;
     if (map.getSource(SRC)) return true;
     const fc = await load();
+    if (!this.running) return false;
     if (map.getSource(SRC)) return true;
     map.addSource(SRC, { type: 'geojson', data: fc, lineMetrics: true });
     map.addSource(SRC_P, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });

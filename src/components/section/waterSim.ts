@@ -18,12 +18,12 @@ import {
 
 /**
  * Conceptual water particles for the street section, drawn as SVG circles.
- * Behaviours: rain → runoff on sealed surfaces (fast, sideways) → inlet or planted depression →
+ * Behaviours: runoff on sealed surfaces (fast, sideways) → inlet or planted depression →
  * infiltration (slow, through pores) → temporary retention in pores → a few to roots / deeper ground.
  * It is a visual explanation; the proportions are illustrative, not measured.
  */
 
-type Kind = 'rain' | 'pipe' | 'runoff' | 'inlet' | 'collect' | 'infil' | 'held' | 'uptake' | 'deep' | 'dry';
+type Kind = 'pipe' | 'runoff' | 'inlet' | 'collect' | 'infil' | 'held' | 'uptake' | 'deep' | 'dry';
 
 interface P {
   k: Kind;
@@ -41,11 +41,10 @@ interface P {
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const MAX = 260;
-/** rain drops per second inside the section, by intensity (visual density only) */
-const RAIN_RATE = [9, 20, 38];
+/** Water inputs per second at the surface, by intensity. */
+const INFLOW_RATE = [9, 20, 38];
 
 const COLOR: Record<Kind, string> = {
-  rain: '#b7d6ff',
   pipe: '#45dcf0',
   runoff: '#45dcf0',
   inlet: '#7d8aa3',
@@ -57,7 +56,6 @@ const COLOR: Record<Kind, string> = {
   dry: '#5fb8ff',
 };
 const RADIUS: Record<Kind, number> = {
-  rain: 1.4,
   pipe: 2,
   runoff: 2.3,
   inlet: 2,
@@ -98,7 +96,7 @@ export class WaterSim {
   private acc = 0;
   private reduced: boolean;
 
-  rain = false;
+  flowing = false;
   intensity = 1;
   paused = false;
 
@@ -225,7 +223,7 @@ export class WaterSim {
     return best;
   }
 
-  private land(x: number) {
+  private feedSurface(x: number) {
     const r = Math.random();
     if (x > BUILDING.x0 && x < BUILDING.x1) {
       if (r < 0.22) this.spawn({ k: 'pipe', x: DOWNPIPE_X, y: BUILDING.roof + 6, tx: DOWNPIPE_X, ty: 166, speed: 140 });
@@ -249,13 +247,11 @@ export class WaterSim {
   private update(dt: number) {
     if (this.reduced) return;
 
-    // rain inside the section (intensity changes the visual density only)
-    if (this.rain) {
-      this.acc += RAIN_RATE[this.intensity] * dt;
+    if (this.flowing) {
+      this.acc += INFLOW_RATE[this.intensity] * dt;
       while (this.acc >= 1) {
         this.acc -= 1;
-        const x = Math.random() * 1000;
-        this.spawn({ k: 'rain', x, y: -8 - Math.random() * 40, tx: 0, ty: 0, speed: 330 + Math.random() * 120 });
+        this.feedSurface(Math.random() * 1000);
       }
     }
 
@@ -264,16 +260,6 @@ export class WaterSim {
       p.age += dt;
       let alive = true;
       switch (p.k) {
-        case 'rain': {
-          p.y += p.speed * dt;
-          p.x += p.speed * 0.08 * dt;
-          const ground = p.x > BUILDING.x0 && p.x < BUILDING.x1 ? BUILDING.roof : surfaceY(p.x);
-          if (p.y >= ground) {
-            this.land(p.x);
-            alive = false;
-          }
-          break;
-        }
         case 'pipe':
           p.y += p.speed * dt;
           if (p.y >= p.ty) {
@@ -395,8 +381,8 @@ export class WaterSim {
     }
     this.ps = keep;
 
-    // retained moisture fades slowly; faster when it is not raining
-    const decay = this.rain ? 0.006 : 0.02;
+    // Retained moisture fades faster after inflow stops.
+    const decay = this.flowing ? 0.006 : 0.02;
     for (let i = 0; i < this.fill.length; i++) this.fill[i] = Math.max(this.base[i], this.fill[i] - decay * dt);
 
   }
@@ -445,7 +431,7 @@ export class WaterSim {
         el.setAttribute('fill', COLOR[p.k]);
         el.setAttribute('stroke', 'none');
       }
-      const base = p.k === 'rain' ? 0.55 : p.k === 'held' ? 0.8 : p.k === 'deep' ? 0.6 : 0.9;
+      const base = p.k === 'held' ? 0.8 : p.k === 'deep' ? 0.6 : 0.9;
       el.setAttribute('opacity', (base * p.fade * dim).toFixed(2));
     }
 
@@ -476,7 +462,7 @@ export class WaterSim {
       this.h.roots[i].style.filter = t > 0.4 ? `drop-shadow(0 0 ${(t * 3).toFixed(1)}px rgba(78,240,162,${(t * 0.5).toFixed(2)}))` : '';
     }
     this.h.moisture?.setAttribute('opacity', Math.min(0.75, (rootSum / Math.max(1, rootN)) * 1.4).toFixed(2));
-    this.h.topsoilWet?.setAttribute('opacity', Math.min(0.6, (sum / this.fill.length) * 2.2 + (this.rain ? 0.12 : 0)).toFixed(2));
+    this.h.topsoilWet?.setAttribute('opacity', Math.min(0.6, (sum / this.fill.length) * 2.2 + (this.flowing ? 0.12 : 0)).toFixed(2));
 
     // guided drop
     const hero = this.h.hero;

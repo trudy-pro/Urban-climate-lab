@@ -144,7 +144,7 @@ export function JourneyCard(p: CardProps) {
     eyebrow = 'Study street · Bachletten';
     title = 'Paulusgasse / Therwilerstrasse';
     body = 'What happens to rain when it reaches this street?';
-    action = { label: p.raining ? 'Show the Water' : 'Make It Rain', onClick: p.onNext };
+    action = { label: p.raining ? 'Show the Water' : 'Make it rain', onClick: p.onNext };
   } else if (p.stage === 'water') {
     eyebrow = 'Follow the water';
     title = p.arrived ? 'The water has soaked in' : 'Where does the rain go?';

@@ -205,7 +205,7 @@ export function idleOrbit(map: MLMap, degPerSec = 1.4): () => void {
     if (stopped) return;
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    if (!map.isMoving()) map.setBearing(map.getBearing() + degPerSec * dt);
+    if (!map.isMoving()) map.setBearing(map.getBearing() + degPerSec * dt, { ambientOrbit: true });
     raf = requestAnimationFrame(tick);
   };
   raf = requestAnimationFrame(tick);

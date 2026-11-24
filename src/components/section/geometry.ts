@@ -254,13 +254,10 @@ export const HERO_ROOT = heroRoot;
 
 export const JOURNEY_STEPS: JourneyStep[] = [
   {
-    text: 'Rain falls on paved and planted surfaces.',
-    layer: null,
-    path: [
-      [HERO_X - 26, -12],
-      [HERO_X, surfaceY(HERO_X) - 1.5],
-    ],
-    ms: 2600,
+    text: 'Follow water already on the street.',
+    layer: 'surface',
+    path: along(HERO_X - 26, HERO_X, 6),
+    ms: 1600,
   },
   {
     text: 'On sealed surfaces, water runs toward lower areas and drainage points.',

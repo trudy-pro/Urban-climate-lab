@@ -28,7 +28,10 @@ Anything not in a dataset is shown as "Data unavailable".
 
 ## What is conceptual
 
-- **Make it Rain**: a visual rain effect plus a "wet street" look.
+- **Stimulate water**: shallow surface water spreads along the real street network (`src/map/surfaceWater.ts`,
+  a MapLibre custom WebGL layer). Direction comes from Terrarium elevation tiles; a simple flow accumulation
+  over the street graph makes streams merge downhill, pond at low points and soak in where streets reach
+  green areas. Gentle / Moderate / Heavy change coverage, speed and ponding. Illustrative only, not a flood model.
 - **Reveal Water Flows**: animated paths built from real roofs, streets, trees and green areas
   (roof → nearest gutter → nearest tree pit / green area). It is an illustration, not a hydraulic model.
   Zoomed out, it shows city-wide runoff routes downhill towards the Birsig, Birs, Wiese and Rhine,
@@ -38,7 +41,7 @@ Anything not in a dataset is shown as "Data unavailable".
   Its **Concept** tab shows an illustrative infiltration-concept drawing (`public/concept/versickerungskonzept.jpg`).
 - **Beneath the Street** (from the street section, or `#underground`): a full-screen React Three Fiber cutaway
   of Therwilerstrasse. Orbit the model, pull five material slabs apart, and inspect the water overlay.
-  Rain traces conceptual routes to the sewer, through permeable surfaces and into storage near the roots.
+  **Stimulate water** shows surface runoff, drainage and slow infiltration. Moisture lingers near the roots once the inflow stops.
   The cutaway is illustrative and its depths are exaggerated.
 
 ## Structure

@@ -1,14 +1,15 @@
-import { useLayoutEffect, useMemo, useRef, type ComponentRef, type PointerEvent } from 'react';
+import { useLayoutEffect, useMemo, useRef, type ComponentRef, type PointerEvent, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Edges, Html, OrbitControls } from '@react-three/drei';
 import {
-  CanvasTexture, DynamicDrawUsage, PCFShadowMap, Group, LineSegments, MathUtils, OrthographicCamera, Vector3,
+  type Camera, CanvasTexture, DynamicDrawUsage, PCFShadowMap, Group, LineSegments, MathUtils, OrthographicCamera, Vector3,
 } from 'three';
 import { BAND, LAYERS, LENGTH, SLABS, WIDTH, zeroOffsets, type LayerKey, type ModelState, type SlabKey } from './data';
 import { Infrastructure, Roots, SlabBody, StreetSurface } from './StreetModel';
 import { WaterMovement } from './WaterMovement';
 
 const HOME_OFFSET = new Vector3(22, 17.4, 35);
+const SURFACE_OFFSET = new Vector3(20, 25, 34);
 
 /**
  * The canvas fills the screen (so shadows are never clipped); the model is framed in the area the
@@ -39,10 +40,12 @@ const SEPARATION = 2.05;
 export type CameraCommand = 'left' | 'right' | 'up' | 'down' | 'near' | 'far';
 
 interface SceneProps {
-  /** opening sequence: how many slabs have been revealed, from the deepest up (0–5) */
+  labelHost: RefObject<HTMLDivElement | null>;
+  /** Number of visible slabs, counted from the street surface down. */
   revealed: number;
+  onReady: () => void;
   apart: boolean;
-  raining: boolean;
+  flowing: boolean;
   labels: boolean;
   reduced: boolean;
   selected: LayerKey | null;
@@ -60,10 +63,10 @@ function nudge(model: ModelState, layer: SlabKey, amount: number) {
   model.manual[layer] = MathUtils.clamp(model.manual[layer] + amount, Math.max(-3.3, min), Math.min(3.3, max));
 }
 
-function LayerHandle({ layer, model, labels, selected, onSelect }: {
+function LayerHandle({ layer, model, labels, selected, onSelect, camera, invalidate }: {
   layer: SlabKey; model: ModelState; labels: boolean; selected: boolean; onSelect: () => void;
+  camera: Camera; invalidate: () => void;
 }) {
-  const { camera, invalidate } = useThree();
   const drag = useRef<{ id: number; y: number } | null>(null);
   const end = (event: PointerEvent<HTMLButtonElement>) => {
     if (drag.current?.id !== event.pointerId) return;
@@ -115,13 +118,13 @@ function LayerHandle({ layer, model, labels, selected, onSelect }: {
 const handleDirection = new Vector3();
 const DETAILS = { surface: StreetSurface, foundation: Infrastructure, roots: Roots };
 
-function Slab({ layer, index, model, revealed, apart, labels, reduced, selected, hovered, onSelect, onHover }: {
+function Slab({ layer, index, model, revealed, apart, labels, reduced, selected, hovered, onSelect, onHover, labelHost }: {
   layer: SlabKey; index: number; model: ModelState;
-} & Pick<SceneProps, 'revealed' | 'apart' | 'labels' | 'reduced' | 'selected' | 'hovered' | 'onSelect' | 'onHover'>) {
+} & Pick<SceneProps, 'revealed' | 'apart' | 'labels' | 'reduced' | 'selected' | 'hovered' | 'onSelect' | 'onHover' | 'labelHost'>) {
   const group = useRef<Group>(null);
-  /** 0 → 1 as the slab grows up out of its own base during the opening sequence */
-  const grow = useRef(0);
-  const shown = revealed > SLABS.length - 1 - index;
+  const { camera, invalidate } = useThree();
+  const grow = useRef(layer === 'surface' ? 1 : 0);
+  const shown = index < revealed;
   const [top, bottom] = BAND[layer];
   const middle = (top + bottom) / 2;
   const visibleLabel = labels;
@@ -137,28 +140,29 @@ function Slab({ layer, index, model, revealed, apart, labels, reduced, selected,
     const g = reduced ? want : Math.abs(grow.current - want) < 0.002 ? want : MathUtils.damp(grow.current, want, 2.6, Math.min(dt, 0.05));
     if (g !== grow.current) gl.shadowMap.needsUpdate = true;
     grow.current = g;
-    // grow from the slab's own base, so each layer rises into place (buildings and trees with the street)
+    // Keep the top seam fixed while the next layer extends down from it.
     const eased = 1 - (1 - g) ** 3;
     const obj = group.current!;
     obj.visible = eased > 0.004;
     obj.scale.y = Math.max(eased, 0.0001);
-    obj.position.y = next + bottom * (1 - eased);
+    obj.position.y = next + top * (1 - eased);
+    if (index === revealed - 1) model.base = obj.position.y + bottom * eased;
     if (next !== target || g !== want) invalidate();
   }, -2);
 
   return (
     <group ref={group}
-      onClick={(event) => {
+      onClick={shown && revealed === SLABS.length ? (event) => {
         if (event.delta > 5) return;
         event.stopPropagation();
         onSelect(layer);
-      }}
-      onPointerOver={(event) => {
+      } : undefined}
+      onPointerOver={shown && revealed === SLABS.length ? (event) => {
         if (event.pointerType === 'touch') return;
         event.stopPropagation();
         onHover(layer);
-      }}
-      onPointerOut={() => onHover(null)}
+      } : undefined}
+      onPointerOut={shown && revealed === SLABS.length ? () => onHover(null) : undefined}
     >
       <SlabBody layer={layer} />
       {Detail && <Detail />}
@@ -170,9 +174,9 @@ function Slab({ layer, index, model, revealed, apart, labels, reduced, selected,
         </mesh>
       )}
       {shown && (apart || visibleLabel) && (
-        <Html position={[WIDTH / 2 + 0.05, middle, LENGTH / 2 + 0.21]} zIndexRange={[8, 1]} className="beneath__anchor">
+        <Html portal={labelHost as RefObject<HTMLElement>} position={[WIDTH / 2 + 0.05, middle, LENGTH / 2 + 0.21]} zIndexRange={[8, 1]} className="beneath__anchor">
           {apart
-            ? <LayerHandle layer={layer} model={model} labels={labels} selected={selected === layer} onSelect={() => onSelect(layer)} />
+            ? <LayerHandle layer={layer} model={model} camera={camera} invalidate={invalidate} labels={labels} selected={selected === layer} onSelect={() => onSelect(layer)} />
             : <span className="beneath__callout">{LAYERS[index].name}</span>}
         </Html>
       )}
@@ -237,7 +241,7 @@ function Floor({ model }: { model: ModelState }) {
   }, []);
   useLayoutEffect(() => () => shadow.dispose(), [shadow]);
   useFrame(() => {
-    group.current!.position.y = BAND.deep[1] + model.offset.deep - 0.18;
+    group.current!.position.y = model.base - 0.18;
   });
   return (
     <group ref={group}>
@@ -253,13 +257,14 @@ function Floor({ model }: { model: ModelState }) {
   );
 }
 
-function CameraRig({ apart, reset, reduced, model, cameraCommand, onHover }: Pick<SceneProps, 'apart' | 'reset' | 'reduced' | 'cameraCommand' | 'onHover'> & { model: ModelState }) {
+function CameraRig({ apart, reset, reduced, revealed, model, cameraCommand, onHover }: Pick<SceneProps, 'apart' | 'reset' | 'reduced' | 'revealed' | 'cameraCommand' | 'onHover'> & { model: ModelState }) {
   const controls = useRef<ComponentRef<typeof OrbitControls>>(null);
   const { size, gl, camera, invalidate } = useThree();
   const cam = camera as OrthographicCamera;
   const initial = useRef(true);
   const queued = useRef<CameraCommand | null>(null);
   const needsHome = useRef(false);
+  const movedByVisitor = useRef(false);
   const baseZoom = useRef(0);
   const fit = useRef(0);
   const deltaPosition = useMemo(() => new Vector3(), []);
@@ -269,15 +274,17 @@ function CameraRig({ apart, reset, reduced, model, cameraCommand, onHover }: Pic
   useLayoutEffect(() => {
     const orbit = controls.current!;
     const area = freeArea(gl.domElement);
-    const next = Math.min(area.w / 30.5, area.h / (apart ? 22.1 : 17.8));
+    const depth = (revealed - 1) / (SLABS.length - 1);
+    const next = Math.min(area.w / 30.5, area.h / (apart ? 24.5 : MathUtils.lerp(20.3, 24, depth)));
+    homeTarget.set(0, MathUtils.lerp(2.65, 0.5, depth), 0.16);
+    homePosition.copy(homeTarget).add(revealed === 1 ? SURFACE_OFFSET : HOME_OFFSET);
     // shift the view so the model's centre lands in the middle of the free area
     const shiftX = area.x + area.w / 2 - size.width / 2;
     const shiftY = area.y + area.h / 2 - size.height / 2;
     cam.setViewOffset(size.width, size.height, -shiftX, -shiftY, size.width, size.height);
     if (initial.current) {
-      homeTarget.set(0, -0.44, 0.16);
       orbit.target.copy(homeTarget);
-      camera.position.copy(homeTarget).add(HOME_OFFSET);
+      camera.position.copy(homePosition);
       cam.zoom = next;
       cam.updateProjectionMatrix();
       orbit.update();
@@ -288,13 +295,13 @@ function CameraRig({ apart, reset, reduced, model, cameraCommand, onHover }: Pic
     orbit.minZoom = next * 0.67;
     orbit.maxZoom = next * 2.4;
     invalidate();
-  }, [apart, cam, camera, gl, homeTarget, invalidate, size.height, size.width]);
+  }, [apart, cam, camera, gl, homePosition, homeTarget, invalidate, revealed, size.height, size.width]);
 
   useLayoutEffect(() => {
-    if (reset === 0) return;
+    if (reset === 0 && (revealed === 1 || movedByVisitor.current)) return;
     needsHome.current = true;
     invalidate();
-  }, [invalidate, reset]);
+  }, [invalidate, reset, revealed]);
 
   useLayoutEffect(() => {
     cameraCommand.current = (command) => {
@@ -318,6 +325,7 @@ function CameraRig({ apart, reset, reduced, model, cameraCommand, onHover }: Pic
     if (command) {
       queued.current = null;
       needsHome.current = false;
+      movedByVisitor.current = true;
       if (command === 'near' || command === 'far') {
         cam.zoom = MathUtils.clamp(cam.zoom * (command === 'near' ? 1.16 : 1 / 1.16), orbit.minZoom, orbit.maxZoom);
         cam.updateProjectionMatrix();
@@ -330,8 +338,6 @@ function CameraRig({ apart, reset, reduced, model, cameraCommand, onHover }: Pic
       orbit.update();
     }
     if (!needsHome.current) return;
-    homeTarget.set(0, -0.44, 0.16);
-    homePosition.copy(homeTarget).add(HOME_OFFSET);
     orbit.target.lerp(homeTarget, alpha);
     camera.position.lerp(homePosition, alpha);
     cam.zoom = MathUtils.lerp(cam.zoom, baseZoom.current, alpha);
@@ -349,14 +355,14 @@ function CameraRig({ apart, reset, reduced, model, cameraCommand, onHover }: Pic
   return (
     <OrbitControls ref={controls} domElement={gl.domElement} enablePan={false} makeDefault enableDamping={!reduced}
       dampingFactor={0.13} rotateSpeed={0.78} zoomSpeed={0.86} minPolarAngle={0.26} maxPolarAngle={Math.PI * 0.57}
-      onStart={() => { needsHome.current = false; if (!model.down) onHover(null); }}
+      onStart={() => { movedByVisitor.current = true; needsHome.current = false; if (!model.down) onHover(null); }}
     />
   );
 }
 
 function Model(props: SceneProps) {
   const { invalidate } = useThree();
-  const model = useMemo<ModelState>(() => ({ offset: zeroOffsets(), manual: zeroOffsets(), down: false }), []);
+  const model = useMemo<ModelState>(() => ({ offset: zeroOffsets(), manual: zeroOffsets(), down: false, base: BAND.surface[1] }), []);
   useLayoutEffect(() => {
     if (!props.apart) {
       model.manual = zeroOffsets();
@@ -378,7 +384,7 @@ function Model(props: SceneProps) {
       <Floor model={model} />
       {SLABS.map((layer, index) => <Slab key={layer} layer={layer} index={index} model={model} {...props} />)}
       <Alignment model={model} />
-      <WaterMovement model={model} raining={props.raining} active={props.selected === 'water'} reduced={props.reduced} onSelect={() => props.onSelect('water')} />
+      <WaterMovement model={model} raining={props.flowing} active={props.selected === 'water'} reduced={props.reduced} onSelect={() => props.onSelect('water')} />
       <CameraRig {...props} model={model} />
     </>
   );
@@ -387,6 +393,7 @@ function Model(props: SceneProps) {
 export default function StreetScene(props: SceneProps) {
   return (
     <Canvas orthographic shadows={{ type: PCFShadowMap, autoUpdate: false, needsUpdate: true }} frameloop="demand" dpr={[1, 1.6]} camera={{ position: [22, 17, 35], near: 0.1, far: 160 }}
+      onCreated={() => props.onReady()}
       gl={{ antialias: true, alpha: true }} style={{ background: 'transparent', touchAction: 'none' }}
       onPointerMissed={(event) => { if (event.type === 'click') props.onSelect(null); }}
       fallback={<p className="beneath__unavailable">This browser could not open the 3D view. Select a layer to read about it.</p>}

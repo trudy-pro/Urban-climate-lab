@@ -22,7 +22,7 @@ export const LAYERS = [
   },
   {
     key: 'water', name: 'Water Movement', material: 'Runoff · infiltration · storage', swatch: '#287eba',
-    text: 'Follow runoff to a curb inlet, or trace it through open surfaces into the substrate and root zone. The blue pools show where some water is held.',
+    text: 'Follow runoff to a curb inlet, or trace it through open surfaces into the substrate and root zone. The blue pools show where moisture lingers as runoff drains away.',
   },
 ] as const;
 
@@ -57,6 +57,7 @@ export interface ModelState {
   offset: Record<SlabKey, number>;
   manual: Record<SlabKey, number>;
   down: boolean;
+  base: number;
 }
 
 export function zeroOffsets(): Record<SlabKey, number> {

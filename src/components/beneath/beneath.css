@@ -41,9 +41,9 @@
 .beneath__brand-t span { font-size: 12px; color: var(--secondary); }
 .beneath__top nav { gap: 4px; padding: 5px; border-radius: 999px; background: var(--glass); border: 1px solid var(--rule); backdrop-filter: blur(16px) saturate(140%); -webkit-backdrop-filter: blur(16px) saturate(140%); }
 .beneath__top button { gap: 0.48rem; padding: 9px 16px; border: 0; border-radius: 999px; color: #c8d3e3; font-weight: 500; font-size: 0.84rem; transition: background 0.25s, color 0.25s; }
-.beneath__top button:last-child { color: #04121c; background: var(--olive); box-shadow: 0 6px 24px rgba(34, 228, 255, 0.35); }
+.beneath__top nav button:last-child { color: #04121c; background: var(--olive); box-shadow: 0 6px 24px rgba(34, 228, 255, 0.35); }
 .beneath__top button:hover { background: rgba(255, 255, 255, 0.06); }
-.beneath__top button:last-child:hover { background: #5beaff; }
+.beneath__top nav button:last-child:hover { background: #5beaff; }
 .beneath__top button svg { width: 1rem; height: 1rem; }
 .beneath__head {
   position: absolute;
@@ -220,8 +220,8 @@
 .beneath__controls .beneath__primary { color: #04121c; background: var(--olive); box-shadow: 0 6px 24px rgba(34, 228, 255, 0.35); }
 .beneath__controls .beneath__primary svg { color: currentColor; }
 .beneath__controls .beneath__primary:hover { background: #5beaff; color: #04121c; }
-.beneath__controls .beneath__rain[aria-pressed=true] { color: #04121c; background: linear-gradient(135deg, #9fd4ff, #4fb6ff); }
-.beneath__controls .beneath__rain[aria-pressed=true] svg { color: currentColor; }
+.beneath__controls .beneath__water[aria-pressed=true] { color: #04121c; background: linear-gradient(135deg, #9fd4ff, #4fb6ff); }
+.beneath__controls .beneath__water[aria-pressed=true] svg { color: currentColor; }
 .beneath__toggle { display: inline-block; width: 1.44rem; height: 0.82rem; padding: 0.14rem; background: rgba(255, 255, 255, 0.18); border-radius: 1rem; }
 .beneath__toggle::after { content: ''; display: block; width: 0.54rem; height: 0.54rem; border-radius: 100%; background: #fff; transition: transform 140ms ease; }
 .beneath__controls [aria-pressed=true] .beneath__toggle { background: var(--olive); }
@@ -342,3 +342,37 @@
 @media (prefers-reduced-motion: reduce) {
   .beneath, .beneath__stage, .beneath.is-leaving, .beneath.is-leaving .beneath__stage { animation-duration: 0.01ms; }
 }
+
+/* Light-mode presentation for the same cutaway geometry and controls. */
+[data-theme='light'] .beneath {
+  --charcoal: #2a2f24;
+  --secondary: #505848;
+  --faint: #596452;
+  --olive: #32637b;
+  --rule: rgba(47, 53, 39, .2);
+  --glass: rgba(238, 239, 232, .88);
+  --glass-strong: #f1f1eb;
+  color-scheme: light;
+  background: radial-gradient(ellipse at 52% 58%, #e4e5dc 40%, #ecede7 100%);
+}
+[data-theme='light'] .beneath__stage::before { opacity: .32; }
+[data-theme='light'] :is(.beneath__head h1, .beneath__head p, .beneath__verse p) { text-shadow: none; }
+[data-theme='light'] :is(.beneath__head p, .beneath__detail p, .beneath__top nav button, .beneath__controls button) { color: var(--secondary); }
+[data-theme='light'] :is(.beneath__legend, .beneath__detail, .beneath__controls) { box-shadow: 0 8px 30px rgba(49, 59, 45, .12); }
+[data-theme='light'] :is(.beneath__handle, .beneath__callout) { background: var(--glass-strong); border-color: var(--rule); }
+[data-theme='light'] :is(.beneath__controls button, .beneath__legend button, .beneath__top nav button):hover {
+  background: #dddfd3;
+  color: var(--charcoal);
+}
+[data-theme='light'] :is(.beneath__top nav button:last-child, .beneath__controls .beneath__primary, .beneath__controls .beneath__water[aria-pressed=true]) {
+  color: #f8faf6;
+  background: var(--olive);
+  box-shadow: none;
+}
+[data-theme='light'] .beneath__legend button[aria-pressed=true] {
+  color: var(--charcoal);
+  background: #d8e5e9;
+  border-color: var(--olive);
+}
+[data-theme='light'] .beneath__brand > span:first-child { box-shadow: none; background: #e0e8e3; border-color: var(--rule); }
+[data-theme='light'] .ug-host.is-under { visibility: hidden; }

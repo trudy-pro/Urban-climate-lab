@@ -1,15 +1,14 @@
+import { ThemeToggle } from './ThemeToggle';
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode, type SVGProps } from 'react';
-import { LAYERS, type LayerKey } from './beneath/data';
+import { LAYERS, SLABS, type LayerKey } from './beneath/data';
 import type { CameraCommand } from './beneath/StreetScene';
-import './beneath/beneath.css';
 
 const StreetScene = lazy(() => import('./beneath/StreetScene'));
 
-type IconName = 'layers' | 'rain' | 'reset' | 'tag' | 'close' | 'back' | 'pin' | 'orbit' | 'section' | 'drop';
+type IconName = 'layers' | 'reset' | 'tag' | 'close' | 'back' | 'pin' | 'orbit' | 'section' | 'drop';
 
 const ICONS: Record<IconName, ReactNode> = {
   layers: <><path d="m3 9 9-5 9 5-9 5z" /><path d="m3 13 9 5 9-5M3 17l9 5 9-5" /></>,
-  rain: <><path d="M7.2 13.5a4 4 0 0 1-.7-7.94 5.5 5.5 0 0 1 10.34.78 3.6 3.6 0 0 1-.55 7.16h-1M9 14.5l-1.5 3.2m4.6-1.2-1.5 3.2m6-4.2L15 19" /></>,
   reset: <><path d="M3.5 11a8.5 8.5 0 1 1 2.2 6.8M3.5 5v6h6" /></>,
   tag: <><path d="M3.5 5.5v6.2l8.4 8.4a1.4 1.4 0 0 0 2 0l6.2-6.2a1.4 1.4 0 0 0 0-2l-8.4-8.4H5.5a2 2 0 0 0-2 2Z" /><circle cx="8" cy="8" r="1" /></>,
   close: <path d="m6 6 12 12M18 6 6 18" />,
@@ -78,16 +77,17 @@ function LayerInspector({ selected, hovered, onSelect, onHover }: {
   );
 }
 
-/** the opening sequence: the ground builds itself from the deepest layer up, one line at a time */
 const VERSES = [
-  'Far below, the old ground: gravel and loam, laid down long before the street.',
-  'Above it, a dark soil where roots go looking for water.',
-  'Then stone and soil, full of small spaces that can hold the rain.',
-  'Pipes and footings, the hidden workings of the city.',
-  'And on top, the street you know.',
-  'When it rains, the water finds its own way down.',
+  'The street you know. Paving, rooftops and a strip of green.',
+  'Just below, pipes and footings carry the hidden workings of the city.',
+  'Then stone and soil, full of small spaces that can hold rain.',
+  'Deeper down, roots thread through the soil in search of water.',
+  'Far below lies the old ground, gravel and loam laid down long before the street.',
+  'Water crosses the road, finds the drains, and seeps into the soil.',
 ];
 const STEP_MS = 2300;
+const WATER_STEP = SLABS.length;
+const INTRO_DONE = WATER_STEP + 1;
 
 interface Props {
   onSection: () => void;
@@ -102,17 +102,19 @@ const CAMERA_KEYS: Record<string, CameraCommand> = {
 
 export function UndergroundView({ onSection, onClose, leaving = false }: Props) {
   const [apart, setApart] = useState(false);
-  const [raining, setRaining] = useState(false);
+  const [flowing, setFlowing] = useState(false);
   const [labels, setLabels] = useState(true);
   const [selected, setSelected] = useState<LayerKey | null>(null);
   const [hovered, setHovered] = useState<LayerKey | null>(null);
   const [reset, setReset] = useState(0);
-  // 0..5 slabs revealed, 6 = the rain verse, 7 = done
-  const [step, setStep] = useState(() => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 7 : 0));
-  const revealing = step < 7;
+  const [step, setStep] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches ? INTRO_DONE : 0);
+  const [sceneReady, setSceneReady] = useState(false);
+  const revealing = step < INTRO_DONE;
+  const revealed = Math.min(step + 1, SLABS.length);
   const [reduced, setReduced] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
   const cameraCommand = useRef<((command: CameraCommand) => void) | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const preference = matchMedia('(prefers-reduced-motion: reduce)');
@@ -129,19 +131,18 @@ export function UndergroundView({ onSection, onClose, leaving = false }: Props) 
   }, []);
 
   useEffect(() => {
-    if (!revealing) return;
-    // a brief first shower once the street is in place, then hand over the controls
-    if (step === 6) setRaining(true);
+    if (!revealing || !sceneReady || leaving) return;
+    if (step === WATER_STEP) setFlowing(true);
     const t = setTimeout(() => {
       setStep((n) => n + 1);
-      if (step === 6) setRaining(false);
-    }, step === 0 ? 900 : step === 6 ? STEP_MS * 2 : STEP_MS);
+      if (step === WATER_STEP) setFlowing(false);
+    }, step === WATER_STEP ? STEP_MS * 2 : STEP_MS);
     return () => clearTimeout(t);
-  }, [revealing, step]);
+  }, [leaving, revealing, sceneReady, step]);
 
   const skipReveal = () => {
-    setStep(7);
-    setRaining(false);
+    setStep(INTRO_DONE);
+    setFlowing(false);
   };
 
   return (
@@ -157,10 +158,13 @@ export function UndergroundView({ onSection, onClose, leaving = false }: Props) 
           <span><Icon name="drop" /></span>
           <span className="beneath__brand-t"><b>Urban Climate Lab</b><span>Basel · Beneath the Surface</span></span>
         </div>
-        <nav aria-label="Street exploration">
-          <button type="button" aria-label="Street Section" onClick={onSection}><Icon name="section" /> <span>Street Section</span></button>
-          <button type="button" onClick={onClose}><Icon name="back" /> <span>Back to Map</span></button>
-        </nav>
+        <div className="dark-cutaway-actions">
+          <nav aria-label="Street exploration">
+            <button type="button" aria-label="Street Section" onClick={onSection}><Icon name="section" /> <span>Street Section</span></button>
+            <button type="button" onClick={onClose}><Icon name="back" /> <span>Back to Map</span></button>
+          </nav>
+          <ThemeToggle />
+        </div>
       </div>
 
       <header className="beneath__head">
@@ -169,7 +173,7 @@ export function UndergroundView({ onSection, onClose, leaving = false }: Props) 
         <p>Explore the hidden layers of Therwilerstrasse.</p>
       </header>
 
-      <div className="beneath__stage" tabIndex={0} role="region" aria-label="Interactive 3D street cutaway"
+      <div className="beneath__stage" ref={stage} tabIndex={0} role="region" aria-label="Interactive 3D street cutaway"
         aria-describedby="beneath-gestures" onKeyDown={(event) => {
           const command = CAMERA_KEYS[event.key];
           if (!command || event.target !== event.currentTarget) return;
@@ -178,28 +182,30 @@ export function UndergroundView({ onSection, onClose, leaving = false }: Props) 
         }} onPointerLeave={() => setHovered(null)}>
         <SceneBoundary>
           <Suspense fallback={<p className="beneath__unavailable" role="status">Loading the 3D cutaway…</p>}>
-            <StreetScene revealed={Math.min(step, 5)} apart={apart} raining={raining} labels={labels && !revealing} reduced={reduced} selected={selected} hovered={hovered}
+            <StreetScene labelHost={stage} onReady={() => setSceneReady(true)} revealed={revealed} apart={apart} flowing={flowing} labels={labels && !revealing} reduced={reduced} selected={selected} hovered={hovered}
               reset={reset} cameraCommand={cameraCommand} onSelect={setSelected} onHover={setHovered} />
           </Suspense>
         </SceneBoundary>
       </div>
 
-      <LayerInspector selected={selected} hovered={hovered} onSelect={setSelected} onHover={setHovered} />
+      <div inert={revealing}>
+        <LayerInspector selected={selected} hovered={hovered} onSelect={setSelected} onHover={setHovered} />
+      </div>
 
       {revealing && (
         <div className="beneath__verse" aria-live="polite">
-          {step > 0 && <p key={step}>{VERSES[Math.min(step, 6) - 1]}</p>}
+          {sceneReady && <p key={step}>{VERSES[step]}</p>}
           <button type="button" onClick={skipReveal}>Skip</button>
         </div>
       )}
 
-      <footer className="beneath__footer">
+      <footer className="beneath__footer" inert={revealing}>
         <div className="beneath__controls" role="group" aria-label="3D view controls">
           <button type="button" className="beneath__primary" aria-pressed={apart} onClick={() => setApart(!apart)}>
             <Icon name="layers" /> {apart ? 'Reassemble Layers' : 'Explode Layers'}
           </button>
-          <button type="button" className="beneath__rain" aria-pressed={raining} onClick={() => setRaining(!raining)}>
-            <Icon name="rain" /> {raining ? 'Stop Rain' : 'Make It Rain'}
+          <button type="button" className="beneath__water" aria-pressed={flowing} onClick={() => setFlowing(!flowing)}>
+            <Icon name="drop" /> {flowing ? 'Stop inflow' : 'Stimulate water'}
           </button>
           <button type="button" onClick={() => {
             setApart(false);

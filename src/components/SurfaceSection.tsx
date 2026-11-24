@@ -1,3 +1,4 @@
+import { ThemeToggle } from './ThemeToggle';
 import { RainIntensity, type RainLevel } from './RainIntensity';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -105,7 +106,7 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
       },
       reduced,
     );
-    sim.rain = raining;
+    sim.flowing = raining;
     sim.intensity = intensity;
     simRef.current = sim;
     return () => {
@@ -123,7 +124,7 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
   }, [open]);
 
   useEffect(() => {
-    if (simRef.current) simRef.current.rain = raining;
+    if (simRef.current) simRef.current.flowing = raining;
   }, [raining]);
   useEffect(() => {
     if (simRef.current) simRef.current.intensity = intensity;
@@ -209,6 +210,7 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
               </button>
             ))}
           </div>
+          <ThemeToggle />
           <button className="icon-btn" onClick={onClose} aria-label="Close section">
             <svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
           </button>
@@ -237,11 +239,11 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
               </>
             ) : (
               <button className="cta cta--xs" onClick={startJourney}>
-                <Drop /> {journey === 'done' ? 'Replay Journey' : 'Follow One Raindrop'}
+                <Drop /> {journey === 'done' ? 'Replay Journey' : 'Follow the Water'}
               </button>
             )}
             <button className={`sx-btn ${raining ? 'is-on' : ''}`} aria-pressed={raining} onClick={onRain}>
-              <RainIcon /> {raining ? 'Raining' : 'Make It Rain'}
+              <Drop /> {raining ? 'Stop inflow' : 'Stimulate water'}
             </button>
           </div>
           <div className="sx-secondary">
@@ -271,7 +273,7 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
         )}
         {journey === 'done' && (
           <div className="sx-caption sx-caption--end" aria-live="polite">
-            <p>You followed one raindrop from the street into the soil. Rain also takes other paths: some runs to the sewer, some is held for a while, some seeps deeper.</p>
+            <p>You followed water from the street into the soil. Some water runs to the sewer, some is held in the soil, and some seeps deeper.</p>
             <div className="sx-end">
               <button className="sx-btn" onClick={startJourney}><Replay /> Replay Journey</button>
               <button className="sx-btn" onClick={exploreLayers}>Explore Layers</button>
@@ -539,7 +541,6 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
       <footer className="surface__foot">
         {(
           <>
-            <span className="legend-dot rain" /> Rain
             <span className="legend-dot cyan" /> Surface runoff
             <span className="legend-dot blue" /> Water in the soil
             <span className="legend-dot green" /> Root uptake
@@ -547,7 +548,7 @@ export function SurfaceSection({ open, raining, intensity, onIntensity, onRain, 
             <span className="badge-illustrative">Illustrative</span>
             <span className="disclaimer">
               {SECTION_DISCLAIMER}
-              {intensity === 2 && ' Heavy rain changes the animation only; it is not a flood or overflow prediction.'}
+              {intensity === 2 && ' Heavy inflow increases the amount of water shown in the illustration.'}
             </span>
           </>
         )}
@@ -570,4 +571,3 @@ const Play = icon('M8 5l11 7-11 7z');
 const Chevron = icon('M10 6l6 6-6 6');
 const Replay = icon('M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4');
 const Drop = icon('M12 3.5c3.6 4.4 6 7.6 6 10.6a6 6 0 0 1-12 0c0-3 2.4-6.2 6-10.6Z');
-const RainIcon = icon('M7 15a4 4 0 1 1 1-7.9A5 5 0 0 1 17.6 9 3.5 3.5 0 0 1 17 16H7M9 19l-1 2M13 19l-1 2M17 19l-1 2');
